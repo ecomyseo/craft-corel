@@ -218,8 +218,7 @@ pub fn set_export_size(st: &mut ExportState, side_mm: f64, typed: f64) {
 }
 
 /// Where a `.cdr` file that does not open right is sent in.
-pub const CDR_ISSUE: &str =
-    "https://github.com/tracedraw/tracedraw/issues/new?template=cdr_file.yml";
+pub const CDR_ISSUE: &str = "https://github.com/ecomyseo/craft-corel/issues";
 
 pub const PDF_STANDARDS: [&str; 4] = ["PDF 1.4", "PDF/X-1a:2003", "PDF/X-3:2003", "PDF/X-4"];
 
@@ -1228,24 +1227,17 @@ pub enum Dialog {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum DesktopChoice {
     Close,
-    /// The release downloads on GitHub.
-    Downloads,
-    /// Craft Corel in the Microsoft Store, offered on Windows only.
-    Store,
+    /// Source and package status of this independent edition.
+    Repository,
 }
 
 /// The buttons of a browser-version message about the desktop app, with
-/// their labels: OK, the downloads and, when the browser runs on Windows,
-/// the Microsoft Store.
-fn desktop_choices(windows: bool) -> Vec<(String, DesktopChoice)> {
-    let mut choices = vec![
+/// their labels: OK and the repository, on every platform.
+fn desktop_choices(_windows: bool) -> Vec<(String, DesktopChoice)> {
+    vec![
         (tr("dialog.ok"), DesktopChoice::Close),
-        (tr("web.notice_download"), DesktopChoice::Downloads),
-    ];
-    if windows {
-        choices.push((tr("web.notice_store"), DesktopChoice::Store));
-    }
-    choices
+        (tr("web.notice_repository"), DesktopChoice::Repository),
+    ]
 }
 
 /// Whether the browser version runs on Windows; never in the desktop app.
@@ -1260,19 +1252,13 @@ fn browser_on_windows() -> bool {
     }
 }
 
-/// The text of a browser-version message about the desktop app: on
-/// Windows a last paragraph says the Microsoft Store version may trail
-/// the latest download while the Store certifies each version.
-fn desktop_message_text(text: &str, windows: bool) -> String {
-    if windows {
-        format!("{text}\n\n{}", tr("web.notice_store_note"))
-    } else {
-        text.to_string()
-    }
+/// The message makes no store-distribution or signing claim.
+fn desktop_message_text(text: &str, _windows: bool) -> String {
+    text.to_string()
 }
 
 /// A browser-version message about the desktop app: OK closes it, the
-/// other buttons open the downloads or, on Windows, the Microsoft Store.
+/// other button opens this edition's repository.
 /// Its close button and Esc only close it.
 fn desktop_app_message(app: &mut App, ctx: &egui::Context, text: &str, close: &mut bool) {
     let windows = browser_on_windows();
@@ -1288,8 +1274,9 @@ fn desktop_app_message(app: &mut App, ctx: &egui::Context, text: &str, close: &m
         return;
     };
     match choices.get(i).map(|(_, c)| *c) {
-        Some(DesktopChoice::Downloads) => app.open_url(crate::updates::RELEASES_PAGE),
-        Some(DesktopChoice::Store) => app.open_url(crate::updates::MICROSOFT_STORE_PAGE),
+        Some(DesktopChoice::Repository) => {
+            app.open_url("https://github.com/ecomyseo/craft-corel");
+        }
         Some(DesktopChoice::Close) | None => {}
     }
     *close = true;
@@ -2067,171 +2054,184 @@ pub fn show(app: &mut App, ctx: &Context) {
             }
         }
         Dialog::Updates => {
-            use crate::updates::UpdateState;
-            let version = env!("CARGO_PKG_VERSION");
-            let close_label = tr("dialog.close");
-            let install = app.installer.get();
-            match app.updates.get() {
-                UpdateState::Available(r) if install != crate::updates::InstallState::Idle => {
-                    use crate::updates::InstallState;
-                    let (text, buttons): (String, Vec<String>) = match &install {
-                        InstallState::Downloading { done, total } => {
-                            ctx.request_repaint_after(std::time::Duration::from_millis(200));
-                            let mb = |b: u64| format!("{:.1}", b as f64 / 1_048_576.0);
-                            (
-                                trf(
-                                    "updates.downloading",
-                                    &[
-                                        ("new", &r.version),
-                                        ("done", &mb(*done)),
-                                        ("total", &mb(*total)),
-                                    ],
-                                ),
-                                vec![close_label.clone()],
-                            )
+            if !crate::updates::ENABLED {
+                if crate::ui::chrome::message_box(
+                    ctx,
+                    crate::ui::chrome::MessageIcon::Info,
+                    &tr("updates.disabled"),
+                    &[&tr("dialog.close")],
+                )
+                .is_some()
+                {
+                    close = true;
+                }
+            } else {
+                use crate::updates::UpdateState;
+                let version = env!("CARGO_PKG_VERSION");
+                let close_label = tr("dialog.close");
+                let install = app.installer.get();
+                match app.updates.get() {
+                    UpdateState::Available(r) if install != crate::updates::InstallState::Idle => {
+                        use crate::updates::InstallState;
+                        let (text, buttons): (String, Vec<String>) = match &install {
+                            InstallState::Downloading { done, total } => {
+                                ctx.request_repaint_after(std::time::Duration::from_millis(200));
+                                let mb = |b: u64| format!("{:.1}", b as f64 / 1_048_576.0);
+                                (
+                                    trf(
+                                        "updates.downloading",
+                                        &[
+                                            ("new", &r.version),
+                                            ("done", &mb(*done)),
+                                            ("total", &mb(*total)),
+                                        ],
+                                    ),
+                                    vec![close_label.clone()],
+                                )
+                            }
+                            InstallState::Installed(v) => (
+                                trf("updates.installed", &[("new", v)]),
+                                vec![tr("updates.restart"), tr("updates.later")],
+                            ),
+                            InstallState::Ready(v) => (
+                                trf("updates.ready", &[("new", v)]),
+                                vec![tr("updates.restart_install"), tr("updates.later")],
+                            ),
+                            InstallState::Failed(e) => (
+                                trf("updates.install_failed", &[("error", e)]),
+                                vec![tr("updates.download"), close_label.clone()],
+                            ),
+                            InstallState::Idle => (String::new(), vec![close_label.clone()]),
+                        };
+                        let labels: Vec<&str> = buttons.iter().map(String::as_str).collect();
+                        match crate::ui::chrome::message_box(
+                            ctx,
+                            crate::ui::chrome::MessageIcon::Info,
+                            &text,
+                            &labels,
+                        ) {
+                            Some(0) if matches!(install, InstallState::Failed(_)) => {
+                                let url = r.download.clone().unwrap_or_else(|| r.page.clone());
+                                app.open_url(&url);
+                                close = true;
+                            }
+                            // Restart: exit the usual way (asking about unsaved
+                            // drawings); the new version starts when the
+                            // program has exited.
+                            Some(0)
+                                if matches!(
+                                    install,
+                                    InstallState::Installed(_) | InstallState::Ready(_)
+                                ) =>
+                            {
+                                if app.installer.arm() {
+                                    app.request_exit();
+                                }
+                                close = true;
+                            }
+                            Some(_) => close = true,
+                            None => {}
                         }
-                        InstallState::Installed(v) => (
-                            trf("updates.installed", &[("new", v)]),
-                            vec![tr("updates.restart"), tr("updates.later")],
-                        ),
-                        InstallState::Ready(v) => (
-                            trf("updates.ready", &[("new", v)]),
-                            vec![tr("updates.restart_install"), tr("updates.later")],
-                        ),
-                        InstallState::Failed(e) => (
-                            trf("updates.install_failed", &[("error", e)]),
-                            vec![tr("updates.download"), close_label.clone()],
-                        ),
-                        InstallState::Idle => (String::new(), vec![close_label.clone()]),
-                    };
-                    let labels: Vec<&str> = buttons.iter().map(String::as_str).collect();
-                    match crate::ui::chrome::message_box(
-                        ctx,
-                        crate::ui::chrome::MessageIcon::Info,
-                        &text,
-                        &labels,
-                    ) {
-                        Some(0) if matches!(install, InstallState::Failed(_)) => {
-                            let url = r.download.clone().unwrap_or_else(|| r.page.clone());
-                            app.open_url(&url);
-                            close = true;
-                        }
-                        // Restart: exit the usual way (asking about unsaved
-                        // drawings); the new version starts when the
-                        // program has exited.
-                        Some(0)
-                            if matches!(
-                                install,
-                                InstallState::Installed(_) | InstallState::Ready(_)
-                            ) =>
+                    }
+                    UpdateState::Idle | UpdateState::Checking => {
+                        ctx.request_repaint_after(std::time::Duration::from_millis(200));
+                        if crate::ui::chrome::message_box(
+                            ctx,
+                            crate::ui::chrome::MessageIcon::Busy,
+                            &tr("updates.checking"),
+                            &[&tr("dialog.cancel")],
+                        )
+                        .is_some()
                         {
-                            if app.installer.arm() {
-                                app.request_exit();
+                            close = true;
+                        }
+                    }
+                    UpdateState::Latest => {
+                        let text = trf("updates.latest", &[("version", version)]);
+                        if crate::ui::chrome::message_box(
+                            ctx,
+                            crate::ui::chrome::MessageIcon::Info,
+                            &text,
+                            &[&close_label],
+                        )
+                        .is_some()
+                        {
+                            close = true;
+                        }
+                    }
+                    UpdateState::Available(r) => {
+                        let text = trf(
+                            "updates.available",
+                            &[("new", &r.version), ("version", version)],
+                        );
+                        let (download, notes, skip) = (
+                            tr("updates.download"),
+                            tr("updates.notes"),
+                            tr("updates.skip"),
+                        );
+                        // An AppImage, a Windows setup copy and a macOS app
+                        // update themselves in place.
+                        let in_place = r.installer.clone().zip(crate::updates::install_target());
+                        let install_label = tr("updates.install");
+                        let mut labels: Vec<&str> = Vec::new();
+                        if in_place.is_some() {
+                            labels.push(&install_label);
+                        }
+                        labels.extend([download.as_str(), &notes, &skip, &close_label]);
+                        let first = usize::from(in_place.is_some());
+                        match crate::ui::chrome::message_box(
+                            ctx,
+                            crate::ui::chrome::MessageIcon::Info,
+                            &text,
+                            &labels,
+                        )
+                        .map(|i| {
+                            if in_place.is_some() && i == 0 {
+                                usize::MAX
+                            } else {
+                                i - first
                             }
-                            close = true;
-                        }
-                        Some(_) => close = true,
-                        None => {}
-                    }
-                }
-                UpdateState::Idle | UpdateState::Checking => {
-                    ctx.request_repaint_after(std::time::Duration::from_millis(200));
-                    if crate::ui::chrome::message_box(
-                        ctx,
-                        crate::ui::chrome::MessageIcon::Busy,
-                        &tr("updates.checking"),
-                        &[&tr("dialog.cancel")],
-                    )
-                    .is_some()
-                    {
-                        close = true;
-                    }
-                }
-                UpdateState::Latest => {
-                    let text = trf("updates.latest", &[("version", version)]);
-                    if crate::ui::chrome::message_box(
-                        ctx,
-                        crate::ui::chrome::MessageIcon::Info,
-                        &text,
-                        &[&close_label],
-                    )
-                    .is_some()
-                    {
-                        close = true;
-                    }
-                }
-                UpdateState::Available(r) => {
-                    let text = trf(
-                        "updates.available",
-                        &[("new", &r.version), ("version", version)],
-                    );
-                    let (download, notes, skip) = (
-                        tr("updates.download"),
-                        tr("updates.notes"),
-                        tr("updates.skip"),
-                    );
-                    // An AppImage, a Windows setup copy and a macOS app
-                    // update themselves in place.
-                    let in_place = r.installer.clone().zip(crate::updates::install_target());
-                    let install_label = tr("updates.install");
-                    let mut labels: Vec<&str> = Vec::new();
-                    if in_place.is_some() {
-                        labels.push(&install_label);
-                    }
-                    labels.extend([download.as_str(), &notes, &skip, &close_label]);
-                    let first = usize::from(in_place.is_some());
-                    match crate::ui::chrome::message_box(
-                        ctx,
-                        crate::ui::chrome::MessageIcon::Info,
-                        &text,
-                        &labels,
-                    )
-                    .map(|i| {
-                        if in_place.is_some() && i == 0 {
-                            usize::MAX
-                        } else {
-                            i - first
-                        }
-                    }) {
-                        Some(usize::MAX) => {
-                            if let Some((package, target)) = in_place {
-                                app.installer.start(
-                                    r.version.clone(),
-                                    package,
-                                    target,
-                                    Some(ctx.clone()),
-                                );
+                        }) {
+                            Some(usize::MAX) => {
+                                if let Some((package, target)) = in_place {
+                                    app.installer.start(
+                                        r.version.clone(),
+                                        package,
+                                        target,
+                                        Some(ctx.clone()),
+                                    );
+                                }
                             }
+                            Some(0) => {
+                                let url = r.download.clone().unwrap_or_else(|| r.page.clone());
+                                app.open_url(&url);
+                                close = true;
+                            }
+                            Some(1) => app.open_url(&r.page),
+                            Some(2) => {
+                                app.settings.skipped_update = r.version.clone();
+                                close = true;
+                            }
+                            Some(_) => close = true,
+                            None => {}
                         }
-                        Some(0) => {
-                            let url = r.download.clone().unwrap_or_else(|| r.page.clone());
-                            app.open_url(&url);
-                            close = true;
-                        }
-                        Some(1) => app.open_url(&r.page),
-                        Some(2) => {
-                            app.settings.skipped_update = r.version.clone();
-                            close = true;
-                        }
-                        Some(_) => close = true,
-                        None => {}
                     }
-                }
-                UpdateState::Failed(e) => {
-                    let text = trf("updates.failed", &[("error", &e)]);
-                    let open = tr("updates.open_releases");
-                    match crate::ui::chrome::message_box(
-                        ctx,
-                        crate::ui::chrome::MessageIcon::Info,
-                        &text,
-                        &[&open, &close_label],
-                    ) {
-                        Some(0) => {
-                            app.open_url(crate::updates::RELEASES_PAGE);
-                            close = true;
+                    UpdateState::Failed(e) => {
+                        let text = trf("updates.failed", &[("error", &e)]);
+                        let open = tr("updates.open_releases");
+                        match crate::ui::chrome::message_box(
+                            ctx,
+                            crate::ui::chrome::MessageIcon::Info,
+                            &text,
+                            &[&open, &close_label],
+                        ) {
+                            Some(0) => {
+                                app.open_url(crate::updates::RELEASES_PAGE);
+                                close = true;
+                            }
+                            Some(_) => close = true,
+                            None => {}
                         }
-                        Some(_) => close = true,
-                        None => {}
                     }
                 }
             }
@@ -8217,10 +8217,65 @@ mod booklet_fields_tests {
 mod desktop_message_tests {
     use super::*;
 
-    /// OK and the downloads everywhere; the Microsoft Store button only
-    /// on Windows, last, named in every language.
     #[test]
-    fn the_store_button_is_offered_on_windows_only() {
+    fn disabled_updates_only_paint_the_disabled_message_and_close() {
+        use crate::updates::{InstallState, Release, UpdateState};
+        assert!(!crate::updates::ENABLED);
+        let mut app = App::headless();
+        let ctx = crate::theme::ui_context();
+        *app.updates.state.lock().expect("state") = UpdateState::Available(Release {
+            version: "9.0.0".into(),
+            page: "https://example.org/release".into(),
+            download: Some("https://example.org/download".into()),
+            installer: None,
+        });
+        *app.installer.state.lock().expect("state") = InstallState::Ready("9.0.0".into());
+        app.dialog = Dialog::Updates;
+        fn text(shape: &egui::Shape, out: &mut Vec<String>) {
+            match shape {
+                egui::Shape::Text(t) => out.push(t.galley.text().to_owned()),
+                egui::Shape::Vec(shapes) => {
+                    for shape in shapes {
+                        text(shape, out);
+                    }
+                }
+                _ => {}
+            }
+        }
+        let mut painted = Vec::new();
+        for _ in 0..2 {
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(
+                        egui::Pos2::ZERO,
+                        egui::vec2(1000.0, 700.0),
+                    )),
+                    ..Default::default()
+                },
+                |ui| show(&mut app, ui.ctx()),
+            );
+            painted.clear();
+            for clipped in &output.shapes {
+                text(&clipped.shape, &mut painted);
+            }
+            output.textures_delta.clear();
+        }
+        assert!(painted.iter().any(|s| s == &tr("updates.disabled")));
+        assert!(painted.iter().any(|s| s == &tr("dialog.close")));
+        for key in [
+            "updates.download",
+            "updates.restart_install",
+            "updates.install",
+        ] {
+            assert!(!painted.iter().any(|s| s == &tr(key)), "{key}: {painted:?}");
+        }
+        assert!(matches!(app.dialog, Dialog::Updates));
+    }
+
+    /// This edition offers its repository on every platform, never a
+    /// third-party store or a nonexistent versioned download.
+    #[test]
+    fn the_repository_button_is_offered_without_a_store_on_every_platform() {
         let kinds = |w| {
             desktop_choices(w)
                 .into_iter()
@@ -8229,39 +8284,31 @@ mod desktop_message_tests {
         };
         assert_eq!(
             kinds(false),
-            [DesktopChoice::Close, DesktopChoice::Downloads]
+            [DesktopChoice::Close, DesktopChoice::Repository]
         );
         assert_eq!(
             kinds(true),
-            [
-                DesktopChoice::Close,
-                DesktopChoice::Downloads,
-                DesktopChoice::Store
-            ]
+            [DesktopChoice::Close, DesktopChoice::Repository]
         );
         for (code, _) in crate::i18n::LANGUAGES {
             crate::i18n::with_thread_language(code, || {
                 let choices = desktop_choices(true);
-                let store = &choices[2].0;
-                assert!(store.contains("Microsoft Store"), "{code}: {store}");
-                assert_ne!(store, &choices[1].0, "{code}");
+                assert_eq!(choices.len(), 2, "{code}");
+                assert!(!choices[1].0.contains("Microsoft Store"), "{code}");
+                assert_ne!(choices[0].0, choices[1].0, "{code}");
             });
         }
     }
 
-    /// On Windows the message ends with a paragraph saying the Store
-    /// version may trail the latest download; elsewhere it is unchanged.
+    /// No platform appends a claim that this edition is signed or sold
+    /// in a store.
     #[test]
-    fn the_store_note_is_added_on_windows_only() {
+    fn no_store_note_is_added_on_any_platform() {
         for (code, _) in crate::i18n::LANGUAGES {
             crate::i18n::with_thread_language(code, || {
                 let text = tr("web.notice_text");
                 assert_eq!(desktop_message_text(&text, false), text, "{code}");
-                let with = desktop_message_text(&text, true);
-                let note = tr("web.notice_store_note");
-                assert!(note.contains("Microsoft Store"), "{code}: {note}");
-                assert!(!note.contains("**"), "{code}: {note}");
-                assert_eq!(with, format!("{text}\n\n{note}"), "{code}");
+                assert_eq!(desktop_message_text(&text, true), text, "{code}");
             });
         }
     }
@@ -8271,7 +8318,7 @@ mod desktop_message_tests {
     #[test]
     fn closing_the_message_answers_ok() {
         let ctx = crate::theme::ui_context();
-        let labels = ["OK", "Downloads", "Store"];
+        let labels = ["OK", "View repository"];
         let mut picked = None;
         let mut out = ctx.run_ui(egui::RawInput::default(), |ui| {
             crate::ui::chrome::request_close(ui.ctx());

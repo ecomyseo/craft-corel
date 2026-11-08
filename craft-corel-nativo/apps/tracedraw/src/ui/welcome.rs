@@ -88,9 +88,10 @@ pub(crate) const RELEASES: &[Release] = &[
     },
 ];
 
-/// The GitHub release page of `version`, with its full list of changes.
-pub(crate) fn release_page(version: &str) -> String {
-    format!("https://github.com/tracedraw/tracedraw/releases/tag/v{version}")
+/// Current changes of this edition; historical base versions are not
+/// published release tags of the independent project.
+pub(crate) fn release_page(_version: &str) -> String {
+    "https://github.com/ecomyseo/craft-corel/commits/main".into()
 }
 
 /// The heading of a release's row: version, date and title.
@@ -562,6 +563,8 @@ fn news(ui: &mut Ui) -> Option<String> {
         ui.add_space(24.0);
         ui.vertical(|ui| {
             ui.set_max_width(640.0);
+            ui.label(tr("welcome.news.source_history"));
+            ui.add_space(8.0);
             for (i, r) in RELEASES.iter().take(HISTORY_LEN).enumerate() {
                 ui.add_space(4.0);
                 let heading = egui::RichText::new(news_heading(r)).strong().size(14.0);
@@ -861,24 +864,18 @@ mod tests {
         assert!(en.contains_key("welcome.news.more"));
     }
 
-    /// Each row's link opens its own version's release page.
+    /// Inherited history links to actual changes of this edition,
+    /// without inventing a release tag for each historical version.
     #[test]
-    fn each_release_links_to_its_own_page() {
-        let mut seen = std::collections::HashSet::new();
+    fn release_history_links_to_current_project_changes() {
         for r in RELEASES {
             let url = release_page(r.version);
-            assert_eq!(
-                url,
-                format!(
-                    "https://github.com/tracedraw/tracedraw/releases/tag/v{}",
-                    r.version
-                )
-            );
-            assert!(seen.insert(url), "{}", r.version);
+            assert_eq!(url, "https://github.com/ecomyseo/craft-corel/commits/main");
+            assert!(!url.contains("/releases/tag/"), "{}", r.version);
         }
         assert_eq!(
             release_page("0.39.0"),
-            "https://github.com/tracedraw/tracedraw/releases/tag/v0.39.0"
+            "https://github.com/ecomyseo/craft-corel/commits/main"
         );
     }
 

@@ -1,7 +1,7 @@
 //! Private Craft Corel units extension, deliberately separate from standard MCFG.
 //! Numeric identifiers here belong to the SDK domain, not CDR record codes.
 use serde_json::{json, Value};
-use std::io::{Cursor, Read};
+use std::io::{Cursor, Read, Write};
 use tracedraw_cdr::{container, open_bytes, riff, write::document_to_cdr_version};
 use tracedraw_core::{
     document::Corners,
@@ -275,7 +275,13 @@ fn replace_payload(bytes: &[u8], payloads: &[Vec<u8>]) -> Vec<u8> {
             .into_iter()
             .filter(|(id, _)| id != b"ccun")
             .collect();
-        parts.extend(payloads.iter().cloned().map(|p| (*b"ccun", p)));
+        let before = parts
+            .iter()
+            .position(|(id, _)| id == b"sumi")
+            .unwrap_or(parts.len());
+        for (offset, payload) in payloads.iter().cloned().enumerate() {
+            parts.insert(before + offset, (*b"ccun", payload));
+        }
         riff_with_chunks(bytes, &parts)
     } else {
         let mut parts: Vec<_> = entries(bytes)
@@ -307,54 +313,154 @@ fn check_bad(bytes: &[u8], reason: &str) {
     );
 }
 
-fn rewrite_direct_mcfg(body: &[u8], replacement: &[Vec<u8>]) -> Vec<u8> {
-    let mut result = Vec::new();
-    let mut offset = 0;
-    while offset < body.len() {
-        let id: [u8; 4] = body[offset..offset + 4].try_into().unwrap();
-        let size = u32::from_le_bytes(body[offset + 4..offset + 8].try_into().unwrap()) as usize;
-        let data = &body[offset + 8..offset + 8 + size];
-        if id == *b"mcfg" {
-            for item in replacement {
-                result.extend(chunk(&id, item));
-            }
-        } else if id == *b"LIST" {
-            assert_ne!(
-                &data[..4],
-                b"cmpr",
-                "this fixture only rewrites direct version14 records"
-            );
-            let mut list = data[..4].to_vec();
-            list.extend(rewrite_direct_mcfg(&data[4..], replacement));
-            result.extend(chunk(&id, &list));
-        } else {
-            result.extend(chunk(&id, data));
-        }
-        offset += 8 + size + (size & 1);
-    }
-    assert_eq!(offset, body.len());
-    result
+// The public reader supplies opaque inflated bytes. This fixture serializer
+// independently regenerates CPng streams and size indices; it never invokes
+// the production writer's private compression/record-building helpers.
+struct ConfigurationFixture<'a> {
+    tree: &'a riff::Tree,
+    main: &'a [u8],
+    replacement: &'a [Vec<u8>],
+    matched: usize,
 }
 
-fn zip_with_direct_mcfg(bytes: &[u8], replacement: &[Vec<u8>]) -> Vec<u8> {
-    let container::ContainerKind::Zip { riff_member, .. } = container::detect(bytes).unwrap().kind
+impl ConfigurationFixture<'_> {
+    fn emit(out: &mut Vec<u8>, id: &[u8; 4], data: &[u8], indexed: bool, pool: &mut Vec<u32>) {
+        let size = u32::try_from(data.len()).unwrap();
+        let field = if indexed {
+            let index = u32::try_from(pool.len()).unwrap();
+            pool.push(size);
+            index
+        } else {
+            size
+        };
+        out.extend_from_slice(id);
+        out.extend_from_slice(&field.to_le_bytes());
+        out.extend_from_slice(data);
+        if data.len() % 2 == 1 {
+            out.push(0);
+        }
+    }
+
+    fn cpng(data: &[u8]) -> Vec<u8> {
+        let mut encoder =
+            flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::default());
+        encoder.write_all(data).unwrap();
+        let mut block = b"CPng\x01\x00\x04\x00".to_vec();
+        block.extend(encoder.finish().unwrap());
+        block
+    }
+
+    fn nodes(&mut self, nodes: &[riff::Chunk], indexed: bool, pool: &mut Vec<u32>) -> Vec<u8> {
+        let mut out = Vec::new();
+        for node in nodes {
+            // Tree's virtual inflated-stream wrapper has no on-disk header.
+            if node.id == *b"cmpr" && node.list_type == Some(*b"cmpr") {
+                out.extend(self.nodes(&node.children, indexed, pool));
+                continue;
+            }
+            if node.id == *b"mcfg" && node.list_type.is_none() {
+                self.matched += 1;
+                for data in self.replacement {
+                    Self::emit(&mut out, &node.id, data, indexed, pool);
+                }
+                continue;
+            }
+            let data = if let Some(kind) = node.list_type {
+                let mut data = kind.to_vec();
+                if kind == *b"cmpr" {
+                    let mut inner_pool = Vec::new();
+                    let inner = self.nodes(&node.children, true, &mut inner_pool);
+                    let sizes: Vec<u8> = inner_pool
+                        .iter()
+                        .flat_map(|size| size.to_le_bytes())
+                        .collect();
+                    let chunks_block = Self::cpng(&inner);
+                    let sizes_block = Self::cpng(&sizes);
+                    for length in [
+                        chunks_block.len(),
+                        inner.len(),
+                        sizes_block.len(),
+                        sizes.len(),
+                    ] {
+                        data.extend_from_slice(&u32::try_from(length).unwrap().to_le_bytes());
+                    }
+                    data.extend(chunks_block);
+                    data.extend(sizes_block);
+                } else if node.children.is_empty() {
+                    // In particular, stlt is an opaque binary list record.
+                    data.extend_from_slice(self.tree.data(self.main, node));
+                } else {
+                    data.extend(self.nodes(&node.children, indexed, pool));
+                }
+                data
+            } else {
+                self.tree.data(self.main, node).to_vec()
+            };
+            Self::emit(&mut out, &node.id, &data, indexed, pool);
+        }
+        out
+    }
+}
+
+fn rebuild_compressed_mcfg(bytes: &[u8], replacement: &[Vec<u8>]) -> Vec<u8> {
+    let container = container::detect(bytes).unwrap();
+    assert_eq!(
+        container.version.0, 14,
+        "do not replace the legacy test with an easier version"
+    );
+    let container::ContainerKind::Zip {
+        ref riff_member, ..
+    } = container.kind
     else {
         panic!("version14 ZIP expected")
     };
-    let mut parts = entries(bytes);
-    let main = &mut parts
-        .iter_mut()
-        .find(|(name, _)| name == &riff_member)
-        .unwrap()
-        .1;
-    let rewritten = rewrite_direct_mcfg(&main[12..], replacement);
+    let main = container::riff_stream(bytes, &container).unwrap();
+    let externals = container::external_streams(bytes, &container);
+    assert!(
+        externals.is_empty(),
+        "legacy fixture uses indexed CPng, not redirects"
+    );
+    let tree = riff::parse_with_externals(&main, externals, 14).unwrap();
+    let mut fixture = ConfigurationFixture {
+        tree: &tree,
+        main: &main,
+        replacement,
+        matched: 0,
+    };
+    let rewritten = fixture.nodes(&tree.root.children, false, &mut Vec::new());
+    assert_eq!(
+        fixture.matched, 1,
+        "mutate exactly one complete original opaque configuration"
+    );
     let mut body = main[8..12].to_vec();
     body.extend(rewritten);
-    let mut output = b"RIFF".to_vec();
-    output.extend_from_slice(&(body.len() as u32).to_le_bytes());
-    output.extend(body);
-    *main = output;
+    let mut riff = b"RIFF".to_vec();
+    riff.extend_from_slice(&u32::try_from(body.len()).unwrap().to_le_bytes());
+    riff.extend(body);
+    assert!(
+        top_chunks(&riff)
+            .iter()
+            .any(|(id, data)| id == b"LIST" && data.starts_with(b"cmpr")),
+        "legacy compression must remain present"
+    );
+    let mut parts = entries(bytes);
+    parts
+        .iter_mut()
+        .find(|(name, _)| name == riff_member)
+        .unwrap()
+        .1 = riff;
     stored_zip(&parts)
+}
+
+fn zip_with_compressed_mcfg(bytes: &[u8], replacement: &[Vec<u8>]) -> Vec<u8> {
+    // Calibrate this actual version14 recompressor before every negative.
+    let original = mcfg(bytes);
+    let positive = rebuild_compressed_mcfg(bytes, &[original.clone()]);
+    assert_eq!(mcfg(&positive), original);
+    let (doc, _) = open_bytes(&positive, "Recompressed unchanged positive control").unwrap();
+    assert_eq!(triple(&doc), (Some(3), Some(1), Some(4)));
+    geometry(&doc);
+    rebuild_compressed_mcfg(bytes, replacement)
 }
 
 #[test]
@@ -533,35 +639,29 @@ fn mixed_zip_and_riff_channels_cannot_override_owned_preferences() {
         .unwrap()
         .1;
     let mut chunks = top_chunks(main);
-    chunks.push((*b"ccun", payload(&bytes)));
+    let before = chunks
+        .iter()
+        .position(|(id, _)| id == b"sumi")
+        .unwrap_or(chunks.len());
+    chunks.insert(before, (*b"ccun", payload(&bytes)));
     *main = riff_with_chunks(main, &chunks);
     check_bad(&stored_zip(&parts), "mixed ZIP and RIFF channels");
 }
 
 #[test]
 fn opaque_standard_configuration_change_invalidates_private_preferences() {
-    // Version14 stores its configuration directly in the RIFF member. Alter
-    // an opaque spare byte, not any interpreted unit or geometry field.
+    // Version14 stores its configuration in indexed CPng inside the ZIP.
+    // Alter an opaque spare byte, not an interpreted unit or geometry field.
     let bytes = document_to_cdr_version(&scene((Some(3), Some(1), Some(4))), 14);
     let configuration = mcfg(&bytes);
-    let mut parts = entries(&bytes);
-    let mut matches = 0;
-    for (_, data) in &mut parts {
-        let positions: Vec<_> = data
-            .windows(configuration.len())
-            .enumerate()
-            .filter_map(|(p, w)| (w == configuration).then_some(p))
-            .collect();
-        for p in positions {
-            matches += 1;
-            data[p + configuration.len() - 1] ^= 1;
-        }
-    }
+    let mut changed = configuration.clone();
+    *changed.last_mut().unwrap() ^= 1;
+    let mutated = zip_with_compressed_mcfg(&bytes, &[changed.clone()]);
     assert_eq!(
-        matches, 1,
-        "fixture must mutate exactly one complete opaque configuration"
+        mcfg(&mutated),
+        changed,
+        "the whole changed configuration must actually reach the reader"
     );
-    let mutated = stored_zip(&parts);
     assert_ne!(mcfg(&mutated), configuration);
     check_bad(
         &mutated,
@@ -603,7 +703,7 @@ fn corrupted_zip_member_crc_rejects_private_units_but_not_standard_geometry() {
 fn duplicate_opaque_standard_configurations_invalidate_private_preferences() {
     let bytes = document_to_cdr_version(&scene((Some(3), Some(1), Some(4))), 14);
     let configuration = mcfg(&bytes);
-    let duplicated = zip_with_direct_mcfg(&bytes, &[configuration.clone(), configuration]);
+    let duplicated = zip_with_compressed_mcfg(&bytes, &[configuration.clone(), configuration]);
     check_bad(&duplicated, "duplicate opaque standard configurations");
 }
 
@@ -612,7 +712,7 @@ fn oversized_opaque_configuration_is_rejected_even_with_matching_private_binding
     let bytes = document_to_cdr_version(&scene((Some(3), Some(1), Some(4))), 14);
     let mut configuration = mcfg(&bytes);
     configuration.resize(65537, 0);
-    let oversized = zip_with_direct_mcfg(&bytes, &[configuration.clone()]);
+    let oversized = zip_with_compressed_mcfg(&bytes, &[configuration.clone()]);
     let mut value: Value = serde_json::from_slice(&payload(&bytes)).unwrap();
     value["mcfg"] = json!({"bytes":65537,"fnv1a64":fnv(&configuration)});
     check_bad(

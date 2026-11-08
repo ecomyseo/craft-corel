@@ -6,8 +6,8 @@
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 /// While a renderer starts and another is left to try, a panic is that
 /// renderer failing (eframe's OpenGL set-up can panic, #616): it is
@@ -220,7 +220,7 @@ fn show(report: &str, saved: Option<&Path>) {
     let mut text = format!("{first}\n\n");
     if let Some(p) = saved {
         text.push_str(&format!(
-            "The details are in {}. Please attach that file to an issue at https://github.com/tracedraw/tracedraw/issues",
+            "The details are in {}. Please attach that file to an issue at https://github.com/ecomyseo/craft-corel/issues",
             p.display()
         ));
     }

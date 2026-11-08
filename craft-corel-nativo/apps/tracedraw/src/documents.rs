@@ -876,9 +876,8 @@ mod tests {
         assert!(!app.has_document());
     }
 
-    /// Restart after an update exits the usual way: answering Cancel to
-    /// the question about an unsaved drawing cancels the restart, and a
-    /// clean exit keeps it armed for the program's exit.
+    /// Prepared update state cannot arm this edition. Cancelling an
+    /// unsaved drawing still keeps the running document open.
     #[test]
     fn cancelling_the_exit_cancels_restart() {
         let launch = crate::updates::Launch {
@@ -888,23 +887,26 @@ mod tests {
         let mut app = App::headless();
         add_rect(&mut app);
         app.installer.staged_for_test(launch.clone());
-        assert!(app.installer.arm());
+        assert!(!app.installer.arm(), "updates are disabled in this edition");
         app.request_exit();
         assert!(matches!(
             app.dialog,
             crate::ui::dialogs::Dialog::ConfirmClose
         ));
-        assert!(app.installer.is_armed(), "still waiting for the answer");
+        assert!(
+            !app.installer.is_armed(),
+            "prepared state cannot bypass policy"
+        );
         app.after_close_question(false);
         assert!(!app.installer.is_armed(), "Cancel cancelled it");
         assert!(!app.quit_now);
-        // With nothing unsaved the exit is immediate and Restart stays.
+        // A clean exit remains available without arming an update.
         app.dialog = crate::ui::dialogs::Dialog::None;
         app.close_active_document();
         app.installer.staged_for_test(launch);
-        assert!(app.installer.arm());
+        assert!(!app.installer.arm());
         app.request_exit();
-        assert!(app.quit_now && app.installer.is_armed());
+        assert!(app.quit_now && !app.installer.is_armed());
     }
 
     fn shapes(app: &App) -> usize {

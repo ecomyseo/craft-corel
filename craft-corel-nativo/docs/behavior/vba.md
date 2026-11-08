@@ -58,8 +58,12 @@ the general engine does not coalesce those commands. Setting the same stored
 unit is a no-op and preserves an existing redo. The actual 214714 product passed
 these cases and positive four-corner constructors. Its own CDR27 round trip
 retains the tested scene's geometry/render, but the stored macro unit changes
-from 3 to absent. CDR unit carriage, GUI ruler binding and persistence of other
-macro settings therefore remain pending; they are not inferred from TDRAW tests.
+from 3 to absent in that historical package. The current source's private CDR
+unit supplement now passes 13 integration tests, including all 21 writer
+versions, 110 unit triples and malformed/duplicate/stale preferences. The two
+rulers are persisted independently and their actual egui paint passes position
+and undo/redo checks. These results establish our own preservation policy;
+standard unit interoperability and other macro settings remain unverified.
 
 ### Application (also global)
 

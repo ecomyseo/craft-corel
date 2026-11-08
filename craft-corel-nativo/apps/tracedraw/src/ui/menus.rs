@@ -7,8 +7,8 @@ use crate::theme::Tokens;
 use crate::ui::dialogs::Dialog;
 use crate::ui::tips::RichTip;
 use egui::Ui;
-use tracedraw_core::document::ShapeKind;
 use tracedraw_core::Command;
+use tracedraw_core::document::ShapeKind;
 
 const MENU_WIDTH: f32 = 250.0;
 /// Menu rows: 26 px tall, a 30 px grey gutter
@@ -1298,8 +1298,8 @@ mod tests {
 
     use super::*;
     use egui::Context;
-    use tracedraw_core::geometry::{Point, Rect};
     use tracedraw_core::ShapeKind;
+    use tracedraw_core::geometry::{Point, Rect};
 
     /// A document with one of the object kinds the menus act on.
     fn mixed_app() -> App {
@@ -1811,9 +1811,11 @@ mod tests {
         }
         let mut entries = Vec::new();
         run_frame(&ctx, |ui| entries = commands(&mut app, ui.ctx()));
-        assert!(entries
-            .iter()
-            .any(|e| e.key == "menu.object.forward_one" && e.shortcut == "Ctrl+PgUp"));
+        assert!(
+            entries
+                .iter()
+                .any(|e| e.key == "menu.object.forward_one" && e.shortcut == "Ctrl+PgUp")
+        );
         // Alt+PgUp brings the bottom object one step forward.
         back(&mut app);
         root_frame(&ctx, &mut app, vec![key(Key::PageUp, Modifiers::ALT)]);
@@ -1896,9 +1898,10 @@ mod tests {
             text.push_str(k);
             used.push(text);
         }
-        assert!(used
-            .iter()
-            .any(|u| crate::shortcuts::same(u, "Alt+Shift+R")));
+        assert!(
+            used.iter()
+                .any(|u| crate::shortcuts::same(u, "Alt+Shift+R"))
+        );
         for (taken, alt) in crate::shortcuts::BROWSER_KEYS {
             let Some(alt) = alt else { continue };
             assert!(
@@ -4168,7 +4171,7 @@ fn window_menu(app: &mut App, ui: &mut Ui) {
     }
     sep(ui);
     {
-        use crate::ui::windows::{set_layout, WindowLayout};
+        use crate::ui::windows::{WindowLayout, set_layout};
         let has = app.has_document();
         let arranged = app.window_layout != WindowLayout::Tabs;
         for (key, layout) in [
@@ -4395,10 +4398,10 @@ fn help_menu(app: &mut App, ui: &mut Ui) {
         app.options_page = crate::ui::dialogs::OptionsPage::General;
     }
     if item(ui, "menu.help.community", "", true) {
-        app.open_url("https://github.com/tracedraw/tracedraw/discussions");
+        app.open_url("https://github.com/ecomyseo/craft-corel/issues");
     }
     if item(ui, "menu.help.support", "", true) {
-        app.open_url("https://github.com/tracedraw/tracedraw/issues");
+        app.open_url("https://github.com/ecomyseo/craft-corel/issues");
     }
     sep(ui);
     if item(ui, "menu.help.about", "", true) {

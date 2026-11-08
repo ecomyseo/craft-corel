@@ -21,9 +21,11 @@ jobs:
       CARGO_BUILD_JOBS: "2"
       CARGO_INCREMENTAL: "0"
       CARGO_PROFILE_DEV_DEBUG: "0"
-      TRACEDRAW_CONFIG_DIR: ${{ runner.temp }}/craft-corel-test-config
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - name: Isolate test settings
+        shell: pwsh
+        run: '"TRACEDRAW_CONFIG_DIR=$env:RUNNER_TEMP/craft-corel-test-config" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8'
       - name: Check text encoding
         run: python utiles/verificar-utf8-publicacion.py . --exceptions craft-corel-nativo/docs/encoding-exceptions.json
       - name: Install the pinned toolchain

@@ -29,6 +29,8 @@ const MAX_REQUEST_LINE: usize = 8 * 1024;
 const MAX_HEADERS: usize = 32 * 1024;
 const MAX_HEADER_LINES: usize = 128;
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
+const MAX_REFUSED_BODY: usize = 8 * 1024;
+const REFUSAL_CLEANUP_TIMEOUT: Duration = Duration::from_millis(50);
 /// How long a request waits for the window to answer.
 const ANSWER_WAIT: Duration = Duration::from_secs(120);
 
@@ -305,45 +307,74 @@ fn serve_connection(stream: TcpStream, token: &str, tx: &Sender<Incoming>, wake:
         );
         let _ = out.flush();
     };
-    // Never wait for an unauthenticated body. Stop receiving, answer and
-    // close instead of draining an attacker-controlled Content-Length.
-    let refuse = |out: &mut TcpStream, status: &str| {
-        let _ = out.shutdown(std::net::Shutdown::Read);
+    // Send the refusal before touching any body. A tiny, time-bounded
+    // cleanup then permits a small request already in flight to receive
+    // that status instead of a TCP reset. Never allocate or parse a body
+    // here, and never drain an attacker-controlled length in full.
+    let refuse = |reader: &mut std::io::BufReader<DeadlineReader>,
+                  out: &mut TcpStream,
+                  status: &str,
+                  framed_body: usize| {
         respond(out, status, "{}");
         let _ = out.shutdown(std::net::Shutdown::Write);
+        let discard = framed_body.min(MAX_REFUSED_BODY);
+        if discard != 0 {
+            let deadline = reader
+                .get_ref()
+                .until
+                .min(Instant::now() + REFUSAL_CLEANUP_TIMEOUT);
+            reader.get_mut().until = deadline;
+            let _ = std::io::copy(&mut reader.take(discard as u64), &mut std::io::sink());
+        }
+        let _ = out.shutdown(std::net::Shutdown::Read);
     };
     let head = match request_head(&mut reader) {
         Ok(head) => head,
         Err(status) => {
-            refuse(&mut out, status);
+            refuse(&mut reader, &mut out, status, 0);
             return;
         }
     };
     if head.path != "/mcp" {
-        refuse(&mut out, "404 Not Found");
+        refuse(
+            &mut reader,
+            &mut out,
+            "404 Not Found",
+            head.length.unwrap_or(0),
+        );
         return;
     }
     if head.method != "POST" {
-        refuse(&mut out, "405 Method Not Allowed");
+        refuse(
+            &mut reader,
+            &mut out,
+            "405 Method Not Allowed",
+            head.length.unwrap_or(0),
+        );
         return;
     }
     // Web pages may not drive the window, and only the bridge (or a client
     // given the token) may.
     if head.origin || head.auth.as_deref() != Some(format!("Bearer {token}").as_str()) {
-        refuse(&mut out, "403 Forbidden");
+        refuse(
+            &mut reader,
+            &mut out,
+            "403 Forbidden",
+            head.length.unwrap_or(0),
+        );
         return;
     }
     let Some(length) = head.length else {
-        refuse(&mut out, "400 Bad Request");
+        refuse(&mut reader, &mut out, "400 Bad Request", 0);
         return;
     };
     if length > MAX_BODY {
-        respond(&mut out, "413 Payload Too Large", "{}");
+        refuse(&mut reader, &mut out, "413 Payload Too Large", length);
         return;
     }
     let mut body = vec![0u8; length];
     if reader.read_exact(&mut body).is_err() {
-        refuse(&mut out, "400 Bad Request");
+        refuse(&mut reader, &mut out, "400 Bad Request", 0);
         return;
     }
     let line = String::from_utf8_lossy(&body).trim().to_string();
@@ -638,6 +669,83 @@ mod tests {
     }
 
     #[test]
+    fn refused_small_sent_bodies_keep_http_status_and_large_bodies_stay_bounded() {
+        let body = "x".repeat(1024);
+        for (path, status) in [("/mcp", "403"), ("/other", "404")] {
+            let request = format!(
+                "POST {path} HTTP/1.1\r\nContent-Length: {}\r\n\r\n{body}",
+                body.len()
+            );
+            assert!(raw_status(request.as_bytes(), false).contains(status));
+        }
+
+        // A whole 64 KiB body has already been offered to TCP. A reset is
+        // legitimate for the part beyond the refusal cleanup budget, but
+        // it must neither wait for the normal 30 s deadline nor reach MCP.
+        let body = "x".repeat(64 * 1024);
+        let header = format!(
+            "POST /mcp HTTP/1.1\r\nContent-Length: {}\r\n\r\n",
+            body.len()
+        );
+        let request = format!("{header}{body}");
+        let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let mut client = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+        client
+            .set_read_timeout(Some(Duration::from_secs(2)))
+            .unwrap();
+        client
+            .set_write_timeout(Some(Duration::from_secs(2)))
+            .unwrap();
+        let (server, _) = listener.accept().unwrap();
+        let (tx, rx) = channel();
+        let worker =
+            std::thread::spawn(move || serve_connection(server, "test-token", &tx, &|| {}));
+        let started = Instant::now();
+        let mut sent = 0;
+        while sent < request.len() {
+            match client.write(&request.as_bytes()[sent..]) {
+                Ok(0) => break,
+                Ok(amount) => sent += amount,
+                Err(error)
+                    if matches!(
+                        error.kind(),
+                        std::io::ErrorKind::ConnectionReset
+                            | std::io::ErrorKind::ConnectionAborted
+                            | std::io::ErrorKind::BrokenPipe
+                    ) =>
+                {
+                    break
+                }
+                Err(error) => panic!("unexpected send error: {error}"),
+            }
+        }
+        assert!(
+            sent >= header.len(),
+            "the full header was sent before refusal"
+        );
+        let mut status = String::new();
+        match std::io::BufReader::new(&mut client).read_line(&mut status) {
+            Ok(_) => assert!(status.contains("403"), "{status:?}"),
+            Err(error) => assert!(
+                matches!(
+                    error.kind(),
+                    std::io::ErrorKind::ConnectionReset
+                        | std::io::ErrorKind::ConnectionAborted
+                        | std::io::ErrorKind::BrokenPipe
+                ),
+                "{error}"
+            ),
+        }
+        client.shutdown(std::net::Shutdown::Both).ok();
+        worker.join().unwrap();
+        assert!(started.elapsed() < Duration::from_secs(2));
+        assert!(
+            rx.try_recv().is_err(),
+            "unauthorized bodies never reach the window"
+        );
+    }
+
+    #[test]
     fn expired_request_deadline_fails_without_waiting_thirty_seconds() {
         let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
         let _client = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
@@ -711,7 +819,7 @@ mod tests {
         });
         let init: serde_json::Value =
             serde_json::from_str(&answers.0.expect("an answer")).expect("json");
-        assert_eq!(init["result"]["serverInfo"]["name"], "tracedraw");
+        assert_eq!(init["result"]["serverInfo"]["name"], "craft-corel");
         assert_eq!(answers.1, None, "notifications get no answer");
         let draw: serde_json::Value =
             serde_json::from_str(&answers.2.expect("an answer")).expect("json");

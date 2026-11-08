@@ -403,6 +403,7 @@ pub fn rulers_page(app: &mut App, ui: &mut Ui) {
                 };
                 if units_combo(ui, id, &mut unit) {
                     *stored = Some(unit.script_unit());
+                    app.set_ruler_unit(horizontal, unit);
                 }
                 ui.end_row();
             }

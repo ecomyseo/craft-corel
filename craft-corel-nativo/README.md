@@ -17,13 +17,17 @@ Las comprobaciones locales distinguen archivos con formato válido, conservació
 de geometría y aspecto, y comparación con la aplicación original. Las pruebas
 internas superadas no sustituyen la comprobación de interoperabilidad.
 
-El código fuente se prepara para su publicación pública en
+El código fuente está publicado en
 [ecomyseo/craft-corel](https://github.com/ecomyseo/craft-corel), por instrucción
 expresa del usuario, como una versión en desarrollo. El instalador final sigue
 pendiente de completar y verificar el objetivo. Los enlaces de descarga de la documentación
 heredada que aparece a continuación corresponden a **TraceDraw original**.
 Se conservan las licencias y atribuciones en `LICENSE-MIT`, `LICENSE-APACHE` y
 `ATTRIBUTION.md`.
+
+Los [manuales de usuario y técnico](docs/manual-craft-corel/README.md) están
+disponibles en HTML y PDF. El repositorio público incluye el estado de la
+auditoría y distingue la versión en desarrollo de las funciones verificadas.
 
 ## Documentación heredada de TraceDraw
 
