@@ -2,7 +2,7 @@
 
 Edición del 8 de noviembre de 2026. Aplicación vectorial de desarrollo basada en TraceDraw. Manual en castellano para la distribución portable de Windows de 64 bits.
 
-Este manual explica cómo trabajar con documentos, organizar el dibujo y preparar archivos de intercambio. La referencia de producto comprobada al redactarlo es la portable modular 214714. Los cambios posteriores de unidades y reglas se identifican expresamente cuando aún corresponden a fuente en validación. Craft Corel es una aplicación independiente: no requiere instalar CorelDRAW y no acredita compatibilidad completa con sus documentos, herramientas o macros.
+Este manual explica cómo trabajar con documentos, organizar el dibujo y preparar archivos de intercambio. Describe la fuente alpha actual, con las nuevas funciones comprobadas en pruebas locales; la distribución modular candidata está en verificación final al fijar esta edición. La portable 214714 es una referencia histórica con diferencias conocidas. Craft Corel es independiente: no requiere CorelDRAW y no acredita compatibilidad completa con sus documentos, herramientas o macros.
 
 [TOC]
 
@@ -13,7 +13,7 @@ Este manual explica cómo trabajar con documentos, organizar el dibujo y prepara
 3. Abra `craft-corel.exe`. La carpeta `craft-corel-settings` conserva las preferencias de esa portable.
 4. Cree un dibujo de prueba y guárdelo con nombre nuevo en formato `.tdraw` antes de abrir un trabajo importante.
 
-No necesita Python, Rust ni el programa de referencia para usar esta portable. Las DLL internas no son complementos intercambiables entre versiones: al actualizar, extraiga el paquete nuevo completo en otra carpeta y conserve el anterior para poder volver atrás. La actualización automática del proyecto de origen está desactivada en esta distribución.
+No necesita Python, Rust ni el programa de referencia para usar esta portable. Las DLL internas no son complementos intercambiables entre versiones: al actualizar, extraiga el paquete nuevo completo en otra carpeta y conserve el anterior para poder volver atrás. La comprobación, descarga, instalación y reinicio de actualizaciones están desactivados en esta edición. Los enlaces de soporte llevan al repositorio propio, sin ofrecer una tienda o descarga ajenas.
 
 La edición de desarrollo documentada no dispone de firma de editor. Un hash permite comprobar que el ZIP coincide con el entregado, pero no sustituye la firma ni una revisión antivirus. Si el sistema bloquea el archivo o falta una DLL, conserve el mensaje exacto y compruebe primero que la extracción esté completa; no mezcle bibliotecas descargadas de sitios distintos.
 
@@ -103,9 +103,11 @@ La validación de color utiliza perfiles y documentos de prueba propios. No cons
 
 El dibujo interno utiliza milímetros. Las reglas y los campos pueden expresar las distancias en otras unidades. En el modelo de macros, `Document.Unit` controla las longitudes que interpreta el script. Cambiar la unidad de visualización no debe escalar físicamente los objetos.
 
-La edición 214714 conserva la unidad de macros en TDRAW, pero pierde ese ajuste al reabrir CDR. La fuente alpha posterior incorpora ejes independientes y conservación privada CDR, todavía pendiente del paquete nuevo verificado. Otros programas pueden ignorar esa extensión; conserve TDRAW. No se atribuye esta mejora a 214714.
+Para configurar la presentación, abra las opciones de reglas y elija la unidad horizontal y vertical por separado. El selector común establece ambas en una acción. Estas preferencias no cambian la unidad de macros ni escalan los objetos; la fuente actual admite 17 identificadores de unidad.
 
-Las reglas H/V y la unidad de automatización son conceptos distintos. Un dibujo puede usar milímetros en macros, pulgadas en la regla horizontal y centímetros en la vertical. Una copia de documento nativa y el producto comprobado de la fase determinan qué preferencias sobreviven a cada recorrido.
+Un dibujo puede usar milímetros en macros, pulgadas en la regla horizontal y centímetros en la vertical. TDRAW conserva los tres ajustes. El escritor y lector propios CDR los conservan mediante una extensión privada versionada, con pruebas locales entre versiones; no se promete que otros programas la interpreten. La extensión guarda solo esos tres valores, no todos los ajustes de origen o escala de reglas.
+
+La portable histórica 214714 perdía la unidad de macros al reabrir CDR. Esa diferencia se corrigió en la fuente actual; compruebe el informe de la distribución nueva y conserve TDRAW para intercambios con otros editores.
 
 No se han resuelto mediante evidencia primaria todas las equivalencias de píxel y cícero. Las convenciones actuales no acreditan las 17 escalas del programa de referencia. Si necesita una medida crítica, trabaje en milímetros o pulgadas y verifique la dimensión física de salida.
 
@@ -200,6 +202,6 @@ Validada significa comprobada en el recorrido indicado, no en todos sus usos. He
 | Impresión, preimpresión y mezcla de datos | Heredada o parcial; sin prueba de impresora ni flujo de imprenta completo. |
 | Lápiz, tableta, escáner y complementos | Sin validación de hardware aquí; no hay un host general de filtros externos ni una pila de escáner propia. |
 | Navegador y Android | Existen en la base; compilar WASM no certifica ejecución en navegador ni funcionamiento móvil. |
-| Unidades CDR estándar, píxel y cícero | Pendientes de interoperabilidad y factores completos. La conservación por extensión propia se identifica por separado. |
+| Unidades y reglas | Validada en fuente: ejes independientes y conservación propia de tres preferencias. Producto candidato en revisión; estándar CDR, píxel y cícero no tienen equivalencia externa completa. |
 
 La guía técnica describe las pruebas, arquitectura y contratos de automatización. Este manual no sustituye la comprobación de un documento real en el programa receptor ni certifica una réplica completa del programa de referencia.

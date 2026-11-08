@@ -2,7 +2,7 @@
 
 Edición del 8 de noviembre de 2026. Arquitectura, automatización y criterios de comprobación de la aplicación independiente basada en TraceDraw.
 
-La portable 214714 constituye la base de producto comprobada de esta edición. Los resultados se identifican por recorrido y artefacto. El desarrollo posterior de unidades CDR y reglas debe vincularse a su paquete verificado antes de atribuirle esas capacidades. La versión objetivo de una API no identifica el producto original ni demuestra equivalencia completa.
+Esta edición describe la fuente alpha actual y sus correcciones verificadas mediante pruebas locales. La nueva distribución modular candidata está en comprobación final; la portable 214714 queda como referencia histórica con pérdida de unidad CDR. Los resultados se identifican por recorrido y artefacto, sin depender de un número de paquete fijo. La versión objetivo de una API no identifica el producto original ni demuestra equivalencia completa.
 
 [TOC]
 
@@ -39,7 +39,7 @@ Las preferencias portables se guardan junto a la aplicación. Para una prueba ai
 
 La edición de desarrollo no tiene firma Authenticode propia. Integridad de ZIP, firma, reputación de descarga y detección antivirus son comprobaciones distintas. La publicación del código fuente no equivale a distribuir un instalador firmado.
 
-Las actualizaciones del proyecto de origen están desactivadas. La fuente alpha actual mantiene el bloqueo en comprobación, descarga, instalación y reinicio; sus controles de interfaz y regresiones se comprueban por separado del mero valor de una constante. No se debe reactivar una actualización de otra distribución para completar DLL faltantes.
+Las actualizaciones están desactivadas en comprobación, descarga, instalación y reinicio. Las pruebas incluyen el diálogo con un instalador preparado: solo ofrece el mensaje desactivado y Cerrar. Se retiró la tienda ajena; soporte, incidencias e inicio apuntan al repositorio propio. El historial heredado se identifica y enlaza cambios actuales, sin inventar etiquetas de releases. No se debe reactivar otra distribución para completar DLL faltantes.
 
 ## 3. Formatos y rutas de intercambio
 
@@ -58,7 +58,7 @@ Los códecs rasterizados compartidos aceptan opciones de DPI, calidad y WebP sin
 
 La conservación de DPI y las dimensiones se comprueban por separado de la validez del códec. El tamaño rasterizado utiliza techo para fracciones físicas reales, con tolerancia numérica estrecha alrededor de enteros para evitar añadir un píxel por error de coma flotante. No se acepta una comparación de apariencia como sustituto de las dimensiones.
 
-La nueva fuente alpha añade límites de entrada y expansión, con repetición de pruebas todavía en curso al fijar esta edición: lectura general de hasta 512 MiB, texto/JSON nativo y SVGZ expandido hasta 256 MiB; lista de datos CDR hasta 1 MiB y 4.096 nombres; agregado de flujos externos de hasta 3 GiB y presupuestos propios de bloques comprimidos. Son límites de implementación por capa, no una promesa de que cualquier documento inferior a ellos abra completo o resulte seguro. El paquete final y su informe deben confirmar los recorridos ejercitados.
+La fuente verificada limita entrada y expansión: lectura binaria general hasta 512 MiB; texto, JSON nativo y SVGZ expandido hasta 256 MiB; lista de datos CDR hasta 1 MiB y 4.096 nombres; agregado de flujos externos hasta 3 GiB y 4.096 entradas. En compresión RIFF, el presupuesto de 1 GiB cuenta datos y pool de tamaños, con rechazo de truncados. Son límites por capa, no una promesa de que cualquier documento inferior a ellos abra completo o resulte seguro. Las pruebas de borde usan límites pequeños controlados; la distribución candidata requiere su propia comprobación.
 
 AI dispone de una modalidad compatible con PDF y otra AI 8 basada en EPS. SVGZ es SVG comprimido. La reimportación de un formato no demuestra que todos los objetos conserven estructura, color o edición; las métricas deben separar archivo válido, tamaño, apariencia y datos.
 
@@ -132,7 +132,9 @@ La enumeración de automatización tiene identificadores de 0 a 16; 0 es válido
 
 Las páginas oficiales 27.2 de `Rulers.HUnits` y `Rulers.VUnits` dicen que afectan solo a interfaz y no a automatización. La nueva fuente mantiene preferencias opcionales independientes para cada eje. El host comprueba identificadores antes de ordenar; un valor desconocido almacenado se conserva, aunque su lectura de macros deba dar un error explícito.
 
-La portable 214714 pierde `script_unit=3` al reabrir un CDR propio, aun conservando la escena. La fuente alpha posterior incorpora una extensión privada versionada para conservar unidad de macros y ejes, todavía pendiente de producto final. RIFF utiliza el bloque propio `ccun`; ZIP utiliza `craft-corel/document-units.json`. El vínculo con la configuración mediante FNV detecta obsolescencia accidental: no es una firma criptográfica, una defensa contra manipulación maliciosa ni una prueba de que otro editor lo interprete. No añade una tabla de unidades estándar del formato original 27 y se mantiene diferenciada de la base 214714.
+La pérdida `script_unit=3` de la portable histórica 214714 se corrige en la fuente actual con una extensión privada versionada. RIFF utiliza `ccun`; ZIP utiliza `craft-corel/document-units.json`. Conserva exactamente tres preferencias opcionales: unidad de macros, horizontal y vertical, incluidas ausencia y cifras desconocidas representables; no conserva por esa vía todo `RulerSettings`, origen o escala.
+
+Las 13 pruebas de formato verificadas incluyen 21 versiones y 110 tuplas. El JSON privado está acotado a 1.024 bytes y su vínculo considera configuraciones MCFG de hasta 65.536 bytes. FNV detecta obsolescencia accidental: no autentica el documento ni protege frente a manipulación maliciosa. Duplicados, versiones futuras, corrupción o vínculo obsoleto siguen la política explícita de rechazo o descarte con aviso y alternativa sin preferencias privadas. No se interpreta MCFG como una tabla estándar de unidades del original 27. La distribución candidata se verifica por separado.
 
 La investigación MCFG encontró una muestra oficial de formato 21 con configuración de 7.944 bytes y una muestra propia 27 que reutiliza esa plantilla. Una especificación declarativa pública deja comentados sus campos de unidades y advierte de posiciones incorrectas en versiones nuevas. No se interpreta ese dato como confirmación independiente de la estructura de 27.
 
@@ -183,6 +185,8 @@ Cada paquete debe mantener sus avisos de licencia, hashes y procedencia. Las dep
 
 La evidencia actual distingue 393 paquetes de grafo de Windows, 379 procedentes del registro y otros locales o vendorizados. Es un resultado del conjunto auditado, no un número universal para todos los destinos o futuras compilaciones.
 
+La revisión OSV comunicada para esta edición abarca 557 paquetes, incluidos dos vendorizados: quedan tres avisos informativos de falta de mantenimiento en paste, rustybuzz y ttf-parser; no equivalen por sí solos a explotación. Tokio se actualizó a 1.53.3. El análisis ESET del staging de fuente comprobó 4.880 archivos sin detecciones; el análisis de binarios estaba pendiente al fijar esta edición. Ninguno de esos resultados certifica ausencia universal de vulnerabilidades. El código es público y se avisó a los desarrolladores del proyecto relacionado; el estado de CI y la auditoría final se consultan en el repositorio.
+
 ## 12. Matriz de cobertura y criterio de cierre
 
 | Área | Evidencia comprobada | Lo que no demuestra |
@@ -195,7 +199,7 @@ La evidencia actual distingue 393 paquetes de grafo de Windows, 379 procedentes 
 | Raster y vectores | Formato real, lecturas y métricas específicas | Fidelidad universal de tamaño, color, texto y edición |
 | Fuente WASM | Comprobación de compilación | Arranque, fuentes, rendimiento y portapapeles web reales |
 | Interfaz y hardware | Capacidades heredadas y pruebas sintéticas o sin ventana | Recorrido completo de escritorio, lápiz o impresora |
-| Unidades CDR | Problema propio observado; conservación privada en validación | Semántica estándar completa del original 27 |
+| Unidades CDR y reglas | Fuente: 13 casos CDR, 21 versiones, 110 tuplas; ejes independientes y conservación privada de tres valores. Candidato en revisión | Todo RulerSettings, interpretación externa del suplemento o semántica estándar completa del original 27 |
 
 Una fase se cierra únicamente para su alcance demostrado. El objetivo de equivalencia completa sigue abierto. Una prueba de lectura, un código de salida 0, un menú visible o una mejora de velocidad no sustituyen la reproducción completa y su oráculo independiente.
 
@@ -207,4 +211,4 @@ El repositorio contiene `docs/features.md`, notas por función en `docs/behavior
 
 Las fuentes públicas de API consultadas incluyen [CreateRectangle 27.2](https://community.coreldraw.com/sdk/api/draw/27.2/m/layer.createrectangle?lang=vba), [CreateRectangle2 27.2](https://community.coreldraw.com/sdk/api/draw/27.2/m/layer.createrectangle2?lang=vba), [Document.Unit](https://community.coreldraw.com/sdk/api/draw/27.2/p/document.unit?lang=vba), [Rulers.HUnits](https://community.coreldraw.com/sdk/api/draw/27.2/p/rulers.hunits?lang=vba) y [Rulers.VUnits](https://community.coreldraw.com/sdk/api/draw/27.2/p/rulers.vunits?lang=vba). Describen contratos públicos; no son pruebas de ejecución local.
 
-Este documento y el manual de usuario se mantienen cada uno en una fuente Markdown. El generador produce HTML autónomo con índice y búsqueda y PDF con índice enlazado. Los informes de validación registran hashes, extracción textual, dimensiones de página y renders revisados; el HTML no necesita servicios externos ni una conexión para leerse.
+Cada manual procede de un Markdown único y genera HTML autónomo y PDF enlazado. La evidencia registra hashes, comprobaciones y renders revisados. El HTML se lee sin conexión ni servicios externos.

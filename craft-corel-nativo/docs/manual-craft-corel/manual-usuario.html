@@ -28,7 +28,7 @@ break-after:avoid}p,li{max-width:none}table{font-size:8pt}tr{break-inside:avoid}
 section.hidden{display:block!important}a{color:inherit}.toc{break-after:page}@page{size:A4;margin:18mm}}
 </style></head><body><header><p>CRAFT COREL · DOCUMENTACIÓN</p></header><div class="tools"><label for="search">Buscar en este manual</label><input id="search" type="search" placeholder="Texto, color, capas…" aria-label="Buscar apartados"><span class="count" id="count" role="status" aria-live="polite"></span></div><main><h1 id="craft-corel-manual-de-usuario">Craft Corel · Manual de usuario</h1>
 <p>Edición del 8 de noviembre de 2026. Aplicación vectorial de desarrollo basada en TraceDraw. Manual en castellano para la distribución portable de Windows de 64 bits.</p>
-<p>Este manual explica cómo trabajar con documentos, organizar el dibujo y preparar archivos de intercambio. La referencia de producto comprobada al redactarlo es la portable modular 214714. Los cambios posteriores de unidades y reglas se identifican expresamente cuando aún corresponden a fuente en validación. Craft Corel es una aplicación independiente: no requiere instalar CorelDRAW y no acredita compatibilidad completa con sus documentos, herramientas o macros.</p>
+<p>Este manual explica cómo trabajar con documentos, organizar el dibujo y preparar archivos de intercambio. Describe la fuente alpha actual, con las nuevas funciones comprobadas en pruebas locales; la distribución modular candidata está en verificación final al fijar esta edición. La portable 214714 es una referencia histórica con diferencias conocidas. Craft Corel es independiente: no requiere CorelDRAW y no acredita compatibilidad completa con sus documentos, herramientas o macros.</p>
 <div class="toc">
 <ul>
 <li><a href="#1-instalar-y-conservar-la-portable">1. Instalar y conservar la portable</a></li>
@@ -56,7 +56,7 @@ section.hidden{display:block!important}a{color:inherit}.toc{break-after:page}@pa
 <li>Abra <code>craft-corel.exe</code>. La carpeta <code>craft-corel-settings</code> conserva las preferencias de esa portable.</li>
 <li>Cree un dibujo de prueba y guárdelo con nombre nuevo en formato <code>.tdraw</code> antes de abrir un trabajo importante.</li>
 </ol>
-<p>No necesita Python, Rust ni el programa de referencia para usar esta portable. Las DLL internas no son complementos intercambiables entre versiones: al actualizar, extraiga el paquete nuevo completo en otra carpeta y conserve el anterior para poder volver atrás. La actualización automática del proyecto de origen está desactivada en esta distribución.</p>
+<p>No necesita Python, Rust ni el programa de referencia para usar esta portable. Las DLL internas no son complementos intercambiables entre versiones: al actualizar, extraiga el paquete nuevo completo en otra carpeta y conserve el anterior para poder volver atrás. La comprobación, descarga, instalación y reinicio de actualizaciones están desactivados en esta edición. Los enlaces de soporte llevan al repositorio propio, sin ofrecer una tienda o descarga ajenas.</p>
 <p>La edición de desarrollo documentada no dispone de firma de editor. Un hash permite comprobar que el ZIP coincide con el entregado, pero no sustituye la firma ni una revisión antivirus. Si el sistema bloquea el archivo o falta una DLL, conserve el mensaje exacto y compruebe primero que la extracción esté completa; no mezcle bibliotecas descargadas de sitios distintos.</p>
 </section><section><h2 id="2-primer-dibujo-paso-a-paso">2. Primer dibujo, paso a paso</h2>
 <ol>
@@ -106,8 +106,9 @@ section.hidden{display:block!important}a{color:inherit}.toc{break-after:page}@pa
 <p>La validación de color utiliza perfiles y documentos de prueba propios. No constituye una prueba de impresión ni una comparación completa con el motor de color de otro editor. RGB, escala de grises, tintas especiales y combinaciones de estilos no tienen una garantía universal de conversión.</p>
 </section><section><h2 id="10-unidades-reglas-y-macros">10. Unidades, reglas y macros</h2>
 <p>El dibujo interno utiliza milímetros. Las reglas y los campos pueden expresar las distancias en otras unidades. En el modelo de macros, <code>Document.Unit</code> controla las longitudes que interpreta el script. Cambiar la unidad de visualización no debe escalar físicamente los objetos.</p>
-<p>La edición 214714 conserva la unidad de macros en TDRAW, pero pierde ese ajuste al reabrir CDR. La fuente alpha posterior incorpora ejes independientes y conservación privada CDR, todavía pendiente del paquete nuevo verificado. Otros programas pueden ignorar esa extensión; conserve TDRAW. No se atribuye esta mejora a 214714.</p>
-<p>Las reglas H/V y la unidad de automatización son conceptos distintos. Un dibujo puede usar milímetros en macros, pulgadas en la regla horizontal y centímetros en la vertical. Una copia de documento nativa y el producto comprobado de la fase determinan qué preferencias sobreviven a cada recorrido.</p>
+<p>Para configurar la presentación, abra las opciones de reglas y elija la unidad horizontal y vertical por separado. El selector común establece ambas en una acción. Estas preferencias no cambian la unidad de macros ni escalan los objetos; la fuente actual admite 17 identificadores de unidad.</p>
+<p>Un dibujo puede usar milímetros en macros, pulgadas en la regla horizontal y centímetros en la vertical. TDRAW conserva los tres ajustes. El escritor y lector propios CDR los conservan mediante una extensión privada versionada, con pruebas locales entre versiones; no se promete que otros programas la interpreten. La extensión guarda solo esos tres valores, no todos los ajustes de origen o escala de reglas.</p>
+<p>La portable histórica 214714 perdía la unidad de macros al reabrir CDR. Esa diferencia se corrigió en la fuente actual; compruebe el informe de la distribución nueva y conserve TDRAW para intercambios con otros editores.</p>
 <p>No se han resuelto mediante evidencia primaria todas las equivalencias de píxel y cícero. Las convenciones actuales no acreditan las 17 escalas del programa de referencia. Si necesita una medida crítica, trabaje en milímetros o pulgadas y verifique la dimensión física de salida.</p>
 </section><section><h2 id="11-abrir-importar-guardar-y-exportar">11. Abrir, importar, guardar y exportar</h2>
 <table>
@@ -320,8 +321,8 @@ section.hidden{display:block!important}a{color:inherit}.toc{break-after:page}@pa
 <td>Existen en la base; compilar WASM no certifica ejecución en navegador ni funcionamiento móvil.</td>
 </tr>
 <tr>
-<td>Unidades CDR estándar, píxel y cícero</td>
-<td>Pendientes de interoperabilidad y factores completos. La conservación por extensión propia se identifica por separado.</td>
+<td>Unidades y reglas</td>
+<td>Validada en fuente: ejes independientes y conservación propia de tres preferencias. Producto candidato en revisión; estándar CDR, píxel y cícero no tienen equivalencia externa completa.</td>
 </tr>
 </tbody>
 </table>

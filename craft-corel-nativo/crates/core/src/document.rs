@@ -5401,6 +5401,10 @@ impl Document {
     /// date by [`migrate`]; newer ones are read as far as this version
     /// knows them (fields it does not know are left out).
     pub fn from_json(s: &str) -> Result<Self> {
+        with_native_json_stack(s, Self::from_json_inner)
+    }
+
+    fn from_json_inner(s: &str) -> Result<Self> {
         let mut v: serde_json::Value = json_value(s)?;
         let from = tdraw_version(&v);
         migrate(&mut v, from);
@@ -5418,27 +5422,64 @@ impl Document {
 }
 
 /// How many brackets (`{` and `[`) of a `.tdraw` file may be open at
-/// once. A group inside a group nests four levels, so this is some 250
-/// groups inside groups, far beyond what a drawing holds (the `.cdr`
-/// reader stops at 64) and read, migrated and drawn well within the
-/// stack of every platform. The JSON reader's own limit is 128 levels,
+/// once. Group nesting consumes several JSON levels. Native deep reads
+/// run on a bounded worker stack; the executable's main stack is unchanged.
+/// The JSON reader's own limit is 128 levels,
 /// about 30 groups inside groups, which drawings do reach: such a
 /// drawing saved and then refused to open, and was lost.
 pub const MAX_JSON_DEPTH: usize = 1024;
 /// The native JSON input is bounded before building its additional value tree.
 pub const MAX_DOCUMENT_JSON_BYTES: usize = 256 << 20;
 
-/// The JSON of a `.tdraw` text as a value, with the reader's nesting
-/// limit lifted and [`MAX_JSON_DEPTH`] in its place.
-fn json_value(s: &str) -> Result<serde_json::Value> {
+/// Derived shape deserializers have large frames even for modest drawings.
+/// Keep their temporary value tree, migration, typed decode and destruction
+/// on the same bounded native worker. Borrow the input instead of copying it.
+/// Limits are checked before reserving a stack or constructing a value tree.
+fn with_native_json_stack<T: Send>(
+    s: &str,
+    read: impl FnOnce(&str) -> Result<T> + Send,
+) -> Result<T> {
     check_json_size(s.len())?;
     let depth = json_depth(s);
+    check_json_depth(depth)?;
+    #[cfg(not(target_arch = "wasm32"))]
+    if depth > 64 {
+        return std::thread::scope(|scope| {
+            let worker = std::thread::Builder::new()
+                .name("craft-native-json".into())
+                .stack_size(32 << 20)
+                .spawn_scoped(scope, move || read(s))
+                .map_err(|e| {
+                    <serde_json::Error as serde::de::Error>::custom(format!(
+                        "cannot start native document reader: {e}"
+                    ))
+                })?;
+            worker.join().map_err(|_| {
+                <serde_json::Error as serde::de::Error>::custom(
+                    "the native document reader panicked",
+                )
+            })?
+        });
+    }
+    read(s)
+}
+
+fn check_json_depth(depth: usize) -> Result<()> {
     if depth > MAX_JSON_DEPTH {
         return Err(<serde_json::Error as serde::de::Error>::custom(format!(
             "the file nests {depth} levels deep; at most {MAX_JSON_DEPTH} are read"
         ))
         .into());
     }
+    Ok(())
+}
+
+/// The JSON of a `.tdraw` text as a value, with the reader's nesting
+/// limit lifted and [`MAX_JSON_DEPTH`] in its place.
+fn json_value(s: &str) -> Result<serde_json::Value> {
+    check_json_size(s.len())?;
+    let depth = json_depth(s);
+    check_json_depth(depth)?;
     let mut de = serde_json::Deserializer::from_str(s);
     de.disable_recursion_limit();
     let v = serde_json::Value::deserialize(&mut de)?;
@@ -5584,7 +5625,7 @@ pub fn tdraw_version(v: &serde_json::Value) -> u32 {
 
 /// The version a `.tdraw` text says it has (0 for unreadable text).
 pub fn tdraw_text_version(s: &str) -> u32 {
-    json_value(s).map(|v| tdraw_version(&v)).unwrap_or(0)
+    with_native_json_stack(s, |s| json_value(s).map(|v| tdraw_version(&v))).unwrap_or(0)
 }
 
 /// One step of [`migrate`]: the JSON of version `i` to version `i + 1`.
@@ -6638,7 +6679,20 @@ mod tests {
         doc.layer_mut(layer).unwrap().shapes.push(inner);
         let json = doc.to_json().unwrap();
         assert!(json_depth(&json) > 128, "{}", json_depth(&json));
-        assert_eq!(tdraw_text_version(&json), TDRAW_FORMAT_VERSION);
+        // Exercise the same small caller stack as the shipped Windows
+        // launcher, rather than relying on the test harness's larger stack.
+        #[cfg(not(target_arch = "wasm32"))]
+        let back = std::thread::Builder::new()
+            .stack_size(1024 * 1024)
+            .spawn(move || {
+                assert_eq!(tdraw_text_version(&json), TDRAW_FORMAT_VERSION);
+                Document::from_json(&json)
+            })
+            .unwrap()
+            .join()
+            .unwrap()
+            .unwrap();
+        #[cfg(target_arch = "wasm32")]
         let back = Document::from_json(&json).unwrap();
         assert_eq!(doc, back);
 

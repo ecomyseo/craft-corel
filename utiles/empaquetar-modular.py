@@ -140,7 +140,14 @@ parser.add_argument("--update-current", action="store_true", help="Actualiza el 
 parser.add_argument("--cargo-license-supplement", type=Path)
 parser.add_argument("--cargo-license-scope", type=Path)
 parser.add_argument("--launcher-manifest", type=Path)
+parser.add_argument("--manuals-dir", type=Path, default=ROOT / "craft-corel-nativo/docs/manual-craft-corel")
 args = parser.parse_args()
+manuals_source = args.manuals_dir.resolve(strict=True)
+assert manuals_source.is_relative_to(ROOT.resolve()), "Los manuales deben estar dentro del espacio de trabajo."
+manual_names = ["manual-usuario.html", "manual-usuario.pdf", "guia-tecnica.html", "guia-tecnica.pdf", "README.md", "LICENCIA-TIPOGRAFIA.txt"]
+for manual_name in manual_names:
+    manual_path = (manuals_source / manual_name).resolve(strict=True)
+    assert manual_path.is_relative_to(manuals_source) and manual_path.is_file(), "Falta un manual o está fuera de su carpeta."
 state_file = args.state_file.resolve(strict=True)
 assert state_file.is_relative_to((ROOT / ".build/modular").resolve())
 state = json.loads(state_file.read_text(encoding="utf-8"))
@@ -257,11 +264,15 @@ for suffix in ["svg","cdr"]:
     shutil.copy2(ROOT / ("ejemplos/craft-corel/Bienvenida." + suffix),DEST / ("Ejemplos/Bienvenida." + suffix))
 (DEST / "craft-corel-settings").mkdir()
 (DEST / "craft-corel-settings/settings.json").write_text(json.dumps({"language":"es","show_splash":False},indent=2),encoding="utf-8")
+(DEST / "Manuales").mkdir()
+for manual_name in manual_names:
+    shutil.copy2(manuals_source / manual_name, DEST / "Manuales" / manual_name)
 (DEST / "LEEME.txt").write_text(
     "CRAFT COREL: PRUEBA PORTABLE MODULAR\n\nExtrae todo el ZIP y abre craft-corel.exe.\n"
     "Mantén todas las DLL junto al EXE. Cada módulo contiene código real y se ha\n"
     "compilado con el mismo Rust 1.97.0; conserva siempre el conjunto completo\n"
     "de esta versión. Las preferencias quedan en craft-corel-settings.\n\n"
+    "Los manuales de usuario y técnico están en Manuales, en HTML y PDF.\n\n"
     "Compilación de desarrollo para Windows de 64 bits, basada en TraceDraw.\n"
     "Todavía no reproduce todas las herramientas ni verifica compatibilidad\n"
     "completa con CorelDRAW. La interfaz visible no se ha probado en este escritorio.\n"
@@ -307,6 +318,8 @@ report["cargo_license_package_count"] = cargo_notices["package_count"]
 report["cargo_license_scope"] = cargo_notices["scope"]
 report["cargo_notices_sha256"] = hashlib.sha256((DEST / "Licencias/CARGO-NOTICES.json").read_bytes()).hexdigest()
 report["launcher_reused_from_manifest"] = str(args.launcher_manifest) if args.launcher_manifest else None
+report["manuals_source"] = str(manuals_source)
+report["manuals"] = [{"path": "Manuales/" + name, "sha256": hashlib.sha256((manuals_source / name).read_bytes()).hexdigest()} for name in manual_names]
 report["max_relative_archive_path_utf16"] = max_relative_path
 report["workspace_extraction_preflight_max_utf16"] = max_workspace_extraction
 report["total_bytes"] = sum(path.stat().st_size for path in DEST.rglob("*") if path.is_file())

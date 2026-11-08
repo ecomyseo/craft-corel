@@ -3,6 +3,9 @@ name: Source checks
 on:
   push:
     branches: [main]
+    paths-ignore:
+      - '**/*.md'
+      - 'craft-corel-nativo/docs/**'
   pull_request:
   workflow_dispatch:
 

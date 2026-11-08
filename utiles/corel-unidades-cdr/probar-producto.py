@@ -115,7 +115,13 @@ def main():
                 reader.call("open", {"path": str(cdr)})
                 observed = reader.saved("reopened.tdraw")
                 assert settings(observed) == list(wanted), (version, wanted, settings(observed))
-                assert script(reader, "const r=ActivePage.Shapes.All.Item(1); print(r.SizeWidth,r.SizeHeight);", model="native") == "40 20"
+                dimensions_text = script(reader, "const r=ActivePage.Shapes.All.Item(1); print(r.SizeWidth,r.SizeHeight);", model="native")
+                dimensions = [float(value) for value in dimensions_text.split()]
+                report["last_dimensions_mm"] = dimensions
+                # CDR coordinates are converted through floating-point affine
+                # matrices. Check physical lengths, not JS number formatting.
+                assert len(dimensions) == 2 and all(abs(value - expected) < 1e-9
+                    for value, expected in zip(dimensions, [40, 20])), dimensions
                 if wanted[0] is None or wanted[0] <= 16:
                     assert script(reader, "print(ActiveDocument.Unit);") == str(1 if wanted[0] is None else wanted[0])
                     for axis, value in zip(["HUnits", "VUnits"], wanted[1:]):

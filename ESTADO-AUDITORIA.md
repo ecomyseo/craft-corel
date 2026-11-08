@@ -4,6 +4,13 @@ La revisión de publicación está en curso. Este documento se actualizará con 
 resultados finales; no constituye un certificado de seguridad ni acredita
 compatibilidad completa con el programa de referencia.
 
+La auditoría del ejecutable detectó agotamiento de pila al abrir un TDRAW propio
+de 40 grupos anidados. Ese candidato se rechazó. El código incorpora una lectura
+nativa en un trabajador con pila acotada, comprobando primero los límites de
+entrada y profundidad; la pila principal del ejecutable sigue siendo de 1 MiB.
+La prueba desde un llamador de 1 MiB pasa. Está pendiente repetir la reproducción
+completa en el nuevo paquete, incluida la profundidad máxima admitida.
+
 El primer código publicado incorpora las preferencias independientes de macros
 y reglas y el suplemento privado de unidades CDR. La prueba de conservación
 entre nuestros programas se distingue de la interoperabilidad con otro editor.

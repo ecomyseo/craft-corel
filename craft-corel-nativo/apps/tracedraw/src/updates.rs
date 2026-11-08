@@ -37,9 +37,6 @@ fn require_enabled() -> Result<(), String> {
 pub const LATEST_URL: &str = "https://api.github.com/repos/tracedraw/tracedraw/releases/latest";
 /// The release list, for when no download fits this system.
 pub const RELEASES_PAGE: &str = "https://github.com/tracedraw/tracedraw/releases";
-/// Craft Corel's page in the Microsoft Store (the browser version offers it
-/// on Windows).
-pub const MICROSOFT_STORE_PAGE: &str = "https://apps.microsoft.com/detail/9P50L12VHF33";
 /// Craft Corel's page in the Microsoft Store app, which Help > Updates opens
 /// in a copy installed from the Store.
 #[cfg(not(target_os = "android"))]
