@@ -1,0 +1,58 @@
+# A versão para navegador
+
+> *Tradução automática: esta página pode estar atrasada em relação à versão em inglês.*
+
+Você pode [usar o TraceDraw no navegador](https://tracedraw.github.io/tracedraw/)
+sem instalar nada. É o mesmo programa da versão para computador, compilado para
+o navegador, então os menus, as ferramentas e os arquivos são os mesmos.
+
+![A mensagem mostrada quando a versão para navegador abre](../../img/get-started-browser-version.png)
+
+## A mensagem ao abrir {#notice}
+
+Cada vez que a página abre, uma mensagem explica que a versão para navegador é
+o mesmo programa da versão para computador e o que muda. [[dialog.ok]] (ou
+<kbd>Enter</kbd>) a fecha; um segundo botão abre os downloads da versão para
+computador. No Windows, um terceiro botão abre o TraceDraw na Microsoft Store,
+e a mensagem avisa que a versão da Store pode estar uma ou mais versões atrás
+do download mais recente, porque a Store certifica cada versão antes.
+
+## O que muda em relação ao computador {#differences}
+
+- **Velocidade.** Desenhos grandes, efeitos pesados, vetorização, mosaicos e
+  exportações grandes são mais lentos e deixam a página ocupada até terminar. A
+  versão para computador roda em velocidade total.
+- **Arquivos.** Abrir e importar usam o seletor de arquivos do navegador;
+  salvar, exportar e imprimir baixam um arquivo. Os desenhos recentes não são
+  listados, porque o navegador não consegue reabrir um arquivo enviado.
+- **Fontes.** A página traz as próprias fontes e busca mais na primeira vez que
+  o texto precisa delas.
+- **Configurações** ficam guardadas naquele navegador, naquele computador.
+- **Teclas.** Enquanto o desenho tem o foco, os atalhos do programa vão para o
+  TraceDraw e não para o navegador, exceto as teclas da área de transferência,
+  recarregar e as ferramentas de desenvolvedor do navegador.
+  <kbd>Ctrl+N</kbd>, <kbd>Ctrl+T</kbd> e <kbd>Ctrl+W</kbd> sempre ficam com o
+  navegador, então use o menu [[menu.file]] para criar e fechar desenhos.
+- **Telas.** É adequada a um navegador de computador com mouse e teclado. Em um
+  tablet, use o espaço de trabalho Toque (veja
+  [Espaços de trabalho](../customize/workspaces.md)); a tela de um celular é
+  pequena demais para editar.
+- **Macros.** Projetos de macro só carregam e rodam na versão para computador.
+  No navegador, qualquer comando de macro mostra uma mensagem avisando, com um
+  botão para baixar o aplicativo.
+- **Atualizações.** A versão para navegador é sempre a mais recente; não há
+  nada para instalar.
+  Instalada como app, ela mantém a versão usada por último e pega uma nova na
+  próxima vez que abrir depois de todas as suas janelas terem sido fechadas;
+  veja [Tablets e o app para Android](tablets-and-android.md).
+- **Desenhos não salvos.** Fechar ou recarregar a aba, ou sair da página,
+  com alterações não salvas pergunta antes, com a pergunta do próprio
+  navegador. Os backups automáticos ficam no armazenamento do navegador para
+  o site, e a próxima visita oferece o que uma aba fechada, recarregada ou
+  travada deixou, como a versão para computador faz depois de uma falha (veja
+  [Backup automático e recuperação](open-and-save.md#recovery)). Limpar os
+  dados do site os remove.
+- **Pressão da caneta.** A pressão da caneta define a largura da Mão livre e
+  das Pinceladas como na versão para computador, quando o navegador a repassa
+  (as versões atuais do Chrome, Edge, Firefox e Safari repassam quando o
+  sistema a informa).

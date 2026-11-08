@@ -1,0 +1,11 @@
+[package]
+name = "tracedraw-vba"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "VBA macros compiled to JavaScript for TraceDraw's script engine"
+
+[dependencies]
+
+[dev-dependencies]
+boa_engine = "0.20"

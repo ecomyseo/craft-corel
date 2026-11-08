@@ -1,0 +1,7 @@
+/target
+*.swp
+.DS_Store
+/corpus/
+/site
+# The Android build (scripts/android/build.sh).
+/dist-android/

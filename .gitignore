@@ -1,0 +1,13 @@
+/target/
+/.build/
+/.tools/
+/runtime/
+/descargas/
+/evidencias/
+**/__pycache__/
+*.pyc
+*.pfx
+*.p12
+*.key
+.env
+.env.*

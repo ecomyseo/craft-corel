@@ -1,0 +1,13 @@
+# The WebAssembly build (wasm32-unknown-unknown) takes its randomness from
+# the browser: getrandom 0.3 picks that backend through this cfg.
+[target.wasm32-unknown-unknown]
+rustflags = ["--cfg", 'getrandom_backend="wasm_js"']
+
+# The Windows builds carry the C runtime inside the program: without it
+# they need vcruntime140.dll, which a fresh Windows may lack, and a start
+# without it can fail with nothing shown (#570).
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]
+
+[target.aarch64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]

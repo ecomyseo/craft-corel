@@ -1,0 +1,137 @@
+# The contents of the Help, in order. A line at the margin is a section
+# (its page is the section's overview); an indented line is a page of the
+# section above. Paths are docs/help/<lang>/<path>.md. See
+# docs/behavior/help.md.
+index
+  welcome/whats-new
+  welcome/about-and-updates
+get-started/index
+  get-started/workspace
+  get-started/new-document
+  get-started/open-and-save
+  get-started/undo-and-views
+  get-started/hints
+  get-started/browser-version
+  get-started/tablets-and-android
+  get-started/github
+lines-shapes/index
+  lines-shapes/lines
+  lines-shapes/artistic-media
+  lines-shapes/pen-pressure
+  lines-shapes/shape-recognition
+  lines-shapes/rectangles-and-ellipses
+  lines-shapes/polygons-stars-spirals
+  lines-shapes/shape-tool
+  lines-shapes/distortion-tools
+  lines-shapes/cut-and-erase
+  lines-shapes/shaping
+  lines-shapes/join-curves
+  lines-shapes/outlines
+  lines-shapes/dimensions
+  lines-shapes/connectors
+objects/index
+  objects/selecting
+  objects/transforming
+  objects/align-distribute
+  objects/fit-objects-to-path
+  objects/step-and-repeat
+  objects/objects-and-layers
+  objects/properties-docker
+  objects/clip-frames
+  objects/symmetry
+  objects/focus-mode
+  objects/symbols
+  objects/object-data
+  objects/links
+  objects/paste-special
+  objects/shelf
+  objects/find-replace
+  objects/find-by-properties
+  objects/comments
+  objects/tables
+  objects/barcodes
+  objects/tracecut
+color/index
+  color/color-docker
+  color/palettes
+  color/fills
+  color/patterns
+  color/eyedroppers
+  color/color-styles
+  color/transparency
+  color/spot-colors
+  color/color-management
+  color/convert-colors
+effects/index
+  effects/effects-docker
+  effects/blend
+  effects/contour
+  effects/distort
+  effects/envelope
+  effects/mockup
+  effects/extrude
+  effects/block-shadow
+  effects/drop-shadow
+  effects/bevel
+  effects/lens
+  effects/perspective
+  effects/copy-and-clone
+  effects/mosaics
+  effects/bitmap-effects
+text/index
+  text/adding-text
+  text/paragraphs
+  text/fonts
+  text/missing-fonts
+  text/writing-tools
+templates-styles/index
+  templates-styles/templates
+  templates-styles/object-styles
+pages-layout/index
+  pages-layout/pages
+  pages-layout/multipage-view
+  pages-layout/document-options
+  pages-layout/guidelines-and-grid
+  pages-layout/snapping
+  pages-layout/document-properties
+bitmaps/index
+  bitmaps/convert-to-bitmap
+  bitmaps/color-modes
+  bitmaps/resample-and-straighten
+  bitmaps/before-after-preview
+  bitmaps/tracing
+  bitmaps/bitmap-mask
+  bitmaps/remove-background
+printing/index
+  printing/print
+  printing/booklet
+  printing/print-merge
+  printing/preflight
+  printing/border-and-grommet
+web-graphics/index
+  web-graphics/export-for-web
+  web-graphics/export-docker
+file-formats/index
+  file-formats/supported-formats
+  file-formats/import
+  file-formats/export
+  file-formats/publish-pdf
+  file-formats/pdf-prepress-marks
+  file-formats/package
+customize/index
+  customize/options-app
+  customize/customization
+  customize/tool-options
+  customize/global-options
+  customize/workspaces
+  customize/reset-settings
+  customize/ai
+  customize/scripts
+  customize/time-tracker
+reference/index
+  reference/keyboard-shortcuts
+  reference/menus
+  reference/toolbox
+  reference/dockers
+  reference/status-bar
+  reference/glossary

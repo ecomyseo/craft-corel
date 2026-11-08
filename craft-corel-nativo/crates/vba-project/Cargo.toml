@@ -1,0 +1,16 @@
+[package]
+name = "tracedraw-vba-project"
+description = "Reads VBA macro projects (compound files and exported module files) and their forms"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+cfb = "0.15"
+encoding_rs.workspace = true
+chardetng = "0.1"
+thiserror.workspace = true

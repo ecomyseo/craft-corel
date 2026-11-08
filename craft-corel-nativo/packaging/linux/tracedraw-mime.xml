@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- The TraceDraw drawing type, so file managers know .tdraw files and
+     show their pictures through tracedraw.thumbnailer. -->
+<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
+  <mime-type type="application/x-tdraw">
+    <comment>TraceDraw drawing</comment>
+    <sub-class-of type="application/json"/>
+    <glob pattern="*.tdraw"/>
+    <icon name="tracedraw"/>
+  </mime-type>
+</mime-info>

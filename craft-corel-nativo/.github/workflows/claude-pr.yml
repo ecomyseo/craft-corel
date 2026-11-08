@@ -1,0 +1,73 @@
+# Opens a pull request for every branch pushed under claude/ and turns on
+# auto-merge, so the change lands once the required checks pass. The pull
+# request, the auto-merge and the merge are made by the Claude GitHub App
+# (claude[bot]): the action exchanges this workflow's OIDC token for an app
+# token and gives it to `gh`.
+#
+# The action does not accept the push event, so the push only dispatches
+# this same workflow on the pushed branch (workflow_dispatch is one of the
+# two events GITHUB_TOKEN may raise), and the dispatched run opens the
+# pull request.
+#
+# The pull request takes its title from the branch's newest commit and its
+# description from the messages of the branch's commits.
+#
+# Needs the repository secret CLAUDE_CODE_OAUTH_TOKEN (from
+# `claude setup-token`) and "Allow auto-merge" in the repository settings.
+name: claude-pr
+
+on:
+  push:
+    branches: ["claude/**"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: write
+  actions: write
+  id-token: write
+
+concurrency:
+  group: claude-pr-${{ github.ref }}-${{ github.event_name }}
+  cancel-in-progress: false
+
+jobs:
+  dispatch:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run claude-pr.yml --repo "$GITHUB_REPOSITORY" --ref "$GITHUB_REF_NAME"
+
+  open:
+    if: github.event_name == 'workflow_dispatch' && startsWith(github.ref, 'refs/heads/claude/')
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          # The dispatch job above raises this run with GITHUB_TOKEN, so the
+          # actor is github-actions[bot]; the action refuses bots by default.
+          allowed_bots: github-actions
+          claude_args: |
+            --max-turns 8
+            --allowedTools "Bash(gh pr list:*),Bash(gh pr create:*),Bash(gh pr merge:*),Bash(git log:*)"
+          prompt: |
+            You open one pull request for the branch ${{ github.ref_name }} of ${{ github.repository }} and nothing else. Do not edit, create or delete any file, do not comment anywhere, do not push.
+
+            1. Run: gh pr list --head "${{ github.ref_name }}" --state open --json number --jq 'length'
+               If it prints a number greater than 0, a pull request already exists: stop and do nothing more.
+            2. Run: git log --format=%s -1 origin/${{ github.ref_name }}
+               That line is the title.
+            3. Run: git log --reverse --format='%B%n---' origin/main..origin/${{ github.ref_name }}
+               That text, unchanged, is the body.
+            4. Run gh pr create --repo ${{ github.repository }} --base main --head "${{ github.ref_name }}" with --title set to the title and --body set to the body (pass both exactly as read, quoted for the shell).
+            5. Run: gh pr merge --repo ${{ github.repository }} --auto --rebase "${{ github.ref_name }}"
+            6. Reply with the pull request's URL only.

@@ -1,0 +1,924 @@
+//! The Android app (#893): the system loads this library into the app's
+//! activity (`dev.tracedraw.app.TraceDrawActivity`, a `NativeActivity`
+//! written in `packaging/android/java`) and the glue of `android-activity`
+//! calls [`android_main`]. The editor opens full screen, drawn with wgpu,
+//! with touch and stylus input through winit. Files go through the
+//! system's document picker (Storage Access Framework) and the clipboard
+//! through the system's clipboard service, both reached over JNI with the
+//! activity's Java methods ([`documents`], [`clipboard`]), and text from
+//! the on-screen keyboard's input methods through an invisible view of
+//! the activity ([`keyboard`]); printing, sharing and "open with" go
+//! through the system's print service, share sheet and intents
+//! ([`outside`]); there are no external programs (docs/behavior/android.md).
+//! When the system relaunches the activity, the process ends once the
+//! drawings are backed up and the system starts it again ([`ending`]).
+
+use android_activity::AndroidApp;
+use jni::refs::Reference as _;
+use std::sync::atomic::{AtomicI32, AtomicUsize, Ordering};
+use std::sync::{Mutex, OnceLock};
+
+/// The tag of the app's lines in the system log (`adb logcat -s tracedraw`).
+const LOG_TAG: &str = "tracedraw";
+
+/// The activity, as the unowned JNI global reference `android-activity`
+/// holds (valid while the app runs), for calls from the editor's thread.
+static ACTIVITY: AtomicUsize = AtomicUsize::new(0);
+
+/// The egui context, so that an answer arriving on the Java UI thread
+/// wakes the editor's frame loop.
+static EGUI: OnceLock<egui::Context> = OnceLock::new();
+
+/// Where the app keeps its settings and log (its private folder) and
+/// where files written without a picker go (its folder under the shared
+/// storage): `settings::config_dir` and `files::save_path` read these.
+fn prepare_folders(app: &AndroidApp) {
+    if let Some(dir) = app.internal_data_path() {
+        std::env::set_var("TRACEDRAW_CONFIG_DIR", &dir);
+        log::info!("settings in {}", dir.display());
+        // The temporary folder (auto-backups and the session marker of
+        // the crash recovery, files handed to other steps): the system's
+        // default, /data/local/tmp, is closed to apps.
+        let tmp = dir.join("tmp");
+        match std::fs::create_dir_all(&tmp) {
+            Ok(()) => std::env::set_var("TMPDIR", &tmp),
+            Err(e) => log::warn!("temporary folder {}: {e}", tmp.display()),
+        }
+    }
+    if let Some(dir) = app.external_data_path() {
+        std::env::set_var("TRACEDRAW_DOCUMENTS_DIR", &dir);
+        log::info!("documents in {}", dir.display());
+    }
+}
+
+/// Panics go to the system log, where `adb logcat` shows them: the app
+/// has no console and no error box.
+fn log_panics() {
+    std::panic::set_hook(Box::new(|info| {
+        log::error!("panic: {info}");
+    }));
+}
+
+/// The entry point the glue calls on the app's own thread, with the
+/// activity's window and input queue behind `app`.
+#[no_mangle]
+fn android_main(app: AndroidApp) {
+    android_logger::init_once(
+        android_logger::Config::default()
+            .with_max_level(log::LevelFilter::Info)
+            .with_tag(LOG_TAG),
+    );
+    log_panics();
+    prepare_folders(&app);
+    ACTIVITY.store(app.activity_as_ptr() as usize, Ordering::Release);
+    ending::keep(&app);
+    ending::register_natives();
+    documents::register_natives();
+    keyboard::register_natives();
+    // The emulator check's HTTPS request (net.rs, #1396).
+    if let Some(url) = launch_extra("tracedraw.https_check") {
+        std::thread::spawn(move || https_check(&url));
+    }
+    // The emulator check's typing test (soft_keyboard::check).
+    if launch_extra("tracedraw.check").as_deref() == Some("typing") {
+        crate::soft_keyboard::check::start();
+    }
+    tracedraw_text::install();
+    tracedraw_io::emf::install();
+    // The hand resting on the screen does not draw while a pen does
+    // (#1832): winit asks about every pointer with its tool.
+    crate::palm::install();
+    // A fresh install starts in the Touch workspace (larger bars and
+    // buttons, no rulers or panels, two fingers pan and a pinch zooms);
+    // another one picked under Window > Workspace is kept.
+    let first_start = crate::settings::Settings::path().is_some_and(|p| !p.exists());
+    let mut settings = crate::settings::Settings::load();
+    if first_start {
+        settings.workspace = crate::app::Workspace::Touch.id().into();
+        settings.save();
+    }
+    crate::i18n::set_language(crate::i18n::startup_language_here(&settings.language));
+    let options = eframe::NativeOptions {
+        android_app: Some(app),
+        renderer: eframe::Renderer::Wgpu,
+        wgpu_options: wgpu_options(),
+        ..Default::default()
+    };
+    let result = eframe::run_native(
+        "Craft Corel",
+        options,
+        Box::new(|cc| {
+            let _ = EGUI.set(cc.egui_ctx.clone());
+            // The on-screen keyboard follows what each frame asks for.
+            cc.egui_ctx.add_plugin(keyboard::Follow);
+            Ok(Box::new(crate::Shell::new(cc, None)))
+        }),
+    );
+    if let Err(e) = result {
+        log::error!("Craft Corel could not open its window: {e}");
+    }
+}
+
+/// The emulator check's HTTPS request (scripts/android/emulator_check.sh
+/// starts the app with `--es tracedraw.https_check <url>`): one GET of
+/// `url` the way the online features send theirs, its outcome logged.
+fn https_check(url: &str) {
+    let req = crate::net::HttpRequest {
+        method: "GET",
+        url: url.to_string(),
+        headers: vec![(
+            "User-Agent".into(),
+            concat!("Craft Corel/", env!("CARGO_PKG_VERSION")).into(),
+        )],
+        body: String::new(),
+        bytes: Vec::new(),
+    };
+    match crate::net::send(&req, 64 * 1024) {
+        Ok(resp) => log::info!("HTTPS check: {url} answered {}", resp.status),
+        Err(e) => log::warn!("HTTPS check: {url} failed: {e}"),
+    }
+}
+
+/// The wgpu set-up of the window: OpenGL ES only, the API the manifest
+/// requires (`android:glEsVersion` 3.0), so every device that installs
+/// the app has it. One API, never two: a window surface made for Vulkan
+/// holds the Android window, and OpenGL ES can then no longer draw into
+/// it (`eglCreateWindowSurface` fails "already connected" and wgpu stops
+/// the app on `Surface::configure`). With Vulkan and OpenGL ES both asked
+/// for, the app closed at once wherever wgpu picked OpenGL ES, as on an
+/// emulator.
+fn wgpu_options() -> eframe::egui_wgpu::WgpuConfiguration {
+    use eframe::egui_wgpu::{SurfaceConfig, WgpuConfiguration, WgpuSetup, WgpuSetupCreateNew};
+    let mut setup = WgpuSetupCreateNew::without_display_handle();
+    setup.instance_descriptor.backends = crate::gpu::ANDROID_BACKENDS;
+    WgpuConfiguration {
+        surface: SurfaceConfig::LOW_LATENCY,
+        wgpu_setup: WgpuSetup::CreateNew(setup),
+        ..Default::default()
+    }
+}
+
+/// Ask for a frame: something arrived from the Java side (a picked
+/// document) while the editor waits for input.
+fn request_repaint() {
+    if let Some(ctx) = EGUI.get() {
+        ctx.request_repaint();
+    }
+}
+
+/// Run `f` with the current thread attached to the Java VM and the
+/// activity object; `None` (logged) when there is no activity yet or the
+/// call failed or threw.
+fn with_activity<T>(
+    what: &str,
+    f: impl FnOnce(&mut jni::Env, &jni::objects::JObject) -> jni::errors::Result<T>,
+) -> Option<T> {
+    let raw = ACTIVITY.load(Ordering::Acquire);
+    if raw == 0 {
+        log::warn!("{what}: the activity is not running");
+        return None;
+    }
+    let vm = match jni::JavaVM::singleton() {
+        Ok(vm) => vm,
+        Err(e) => {
+            log::warn!("{what}: no Java VM: {e}");
+            return None;
+        }
+    };
+    let result = vm.attach_current_thread(|env| -> jni::errors::Result<T> {
+        // SAFETY: the pointer is the global reference `android-activity`
+        // holds for the activity, valid while the app runs; it is only
+        // borrowed here (a `JObject` neither deletes nor owns it).
+        let activity = unsafe { jni::objects::JObject::from_raw(env, raw as jni::sys::jobject) };
+        f(env, &activity)
+    });
+    match result {
+        Ok(v) => Some(v),
+        Err(e) => {
+            log::warn!("{what}: {e}");
+            None
+        }
+    }
+}
+
+/// A Java string as a Rust one (`None` for null).
+fn string_of(env: &jni::Env, s: &jni::objects::JString) -> Option<String> {
+    if s.is_null() {
+        return None;
+    }
+    s.mutf8_chars(env)
+        .ok()
+        .map(|chars| chars.to_str().into_owned())
+}
+
+/// A text the activity was started with (`am start --es name value`):
+/// the emulator check (scripts/android/emulator_check.sh) asks for its
+/// checks this way. `None` when the start gave none.
+pub fn launch_extra(name: &str) -> Option<String> {
+    use jni::objects::JString;
+    use jni::{jni_sig, jni_str, JValue};
+    with_activity("read the start's extras", |env, activity| {
+        let intent = env
+            .call_method(
+                activity,
+                jni_str!("getIntent"),
+                jni_sig!("()Landroid/content/Intent;"),
+                &[],
+            )?
+            .l()?;
+        if intent.is_null() {
+            return Ok(None);
+        }
+        let key = env.new_string(name)?;
+        let value = env
+            .call_method(
+                &intent,
+                jni_str!("getStringExtra"),
+                jni_sig!("(Ljava/lang/String;)Ljava/lang/String;"),
+                &[JValue::Object(&key)],
+            )?
+            .l()?;
+        let value: JString = env.cast_local::<JString>(value)?;
+        Ok(string_of(env, &value))
+    })
+    .flatten()
+}
+
+/// Files through the system's document picker and content URIs.
+pub mod documents {
+    use super::*;
+    use jni::objects::{JByteArray, JObject, JString};
+    use jni::sys::jint;
+    use jni::{jni_sig, jni_str, EnvUnowned, JValue};
+
+    /// One document the picker returned.
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    pub struct Picked {
+        /// The content URI, which [`read`] and [`write`] take.
+        pub uri: String,
+        /// The name the provider shows for it.
+        pub name: String,
+        /// Its MIME type when the provider knows one.
+        pub mime: String,
+    }
+
+    /// What the picker answered for one request: the documents, or none
+    /// when it was cancelled.
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    pub struct Answer {
+        pub request: i32,
+        pub picked: Vec<Picked>,
+    }
+
+    /// The request code of documents another app asked Craft Corel to open
+    /// (a file manager's Open with, Share; `TraceDrawActivity.OPENED_ELSEWHERE`):
+    /// each opens in a tab of its own (#646). Picker requests start at 1000.
+    pub const OPENED_ELSEWHERE: i32 = 0;
+
+    /// Answers that arrived from the Java side, taken by the frame loop.
+    static ANSWERS: Mutex<Vec<Answer>> = Mutex::new(Vec::new());
+
+    /// The next request code; the activity hands them back unchanged.
+    static NEXT_REQUEST: AtomicI32 = AtomicI32::new(1000);
+
+    /// A request code no other request has.
+    pub fn next_request() -> i32 {
+        NEXT_REQUEST.fetch_add(1, Ordering::Relaxed)
+    }
+
+    /// `TraceDrawActivity.nativeDocumentResult`: the picked documents (or
+    /// null for a cancel), queued for the frame loop, which is woken.
+    extern "system" fn native_document_result<'local>(
+        mut env: EnvUnowned<'local>,
+        _this: JObject<'local>,
+        request: jint,
+        uris: JString<'local>,
+        names: JString<'local>,
+        mimes: JString<'local>,
+    ) {
+        env.with_env(|env| -> jni::errors::Result<()> {
+            let uris = string_of(env, &uris);
+            let names = string_of(env, &names).unwrap_or_default();
+            let mimes = string_of(env, &mimes).unwrap_or_default();
+            let picked = match uris {
+                Some(uris) => {
+                    let names: Vec<&str> = names.split('\n').collect();
+                    let mimes: Vec<&str> = mimes.split('\n').collect();
+                    uris.split('\n')
+                        .enumerate()
+                        .filter(|(_, u)| !u.is_empty())
+                        .map(|(i, uri)| Picked {
+                            uri: uri.to_string(),
+                            name: names.get(i).copied().unwrap_or("").to_string(),
+                            mime: mimes.get(i).copied().unwrap_or("").to_string(),
+                        })
+                        .collect()
+                }
+                None => Vec::new(),
+            };
+            log::info!(
+                "document picker: request {request}, {} picked",
+                picked.len()
+            );
+            if let Ok(mut a) = ANSWERS.lock() {
+                a.push(Answer { request, picked });
+            }
+            Ok(())
+        })
+        .resolve::<jni::errors::LogErrorAndDefault>();
+        request_repaint();
+    }
+
+    /// Bind the activity's native methods to their Rust functions (the
+    /// library is loaded by the system, not by `System.loadLibrary`
+    /// alone, so the names are registered rather than looked up).
+    pub fn register_natives() {
+        let done = with_activity("register natives", |env, activity| {
+            let class = env.get_object_class(activity)?;
+            let methods = [
+                // SAFETY: the function has the instance-method shape for
+                // this signature: an unowned env, `this`, an int and three
+                // strings, returning nothing.
+                unsafe {
+                    jni::NativeMethod::from_raw_parts(
+                        jni_str!("nativeDocumentResult"),
+                        jni_str!("(ILjava/lang/String;Ljava/lang/String;Ljava/lang/String;)V"),
+                        native_document_result as *mut std::ffi::c_void,
+                    )
+                },
+            ];
+            // SAFETY: as above; the class is the activity's own.
+            unsafe { env.register_native_methods(&class, &methods) }
+        });
+        if done.is_none() {
+            log::error!("the document picker will not answer: native methods not registered");
+            return;
+        }
+        // The documents of the intent that started the app (another app
+        // opened one with Craft Corel) can come now.
+        let _ = with_activity("documents opened elsewhere", |env, activity| {
+            env.call_method(
+                activity,
+                jni_str!("readyForDocuments"),
+                jni_sig!("()V"),
+                &[],
+            )?
+            .v()
+        });
+    }
+
+    /// Show the picker for a document (several when `multiple`); the
+    /// answer arrives through [`take_answers`] with `request`.
+    pub fn open(request: i32, multiple: bool) -> bool {
+        with_activity("open document", |env, activity| {
+            env.call_method(
+                activity,
+                jni_str!("openDocument"),
+                jni_sig!("(IZ)V"),
+                &[
+                    JValue::Int(request),
+                    JValue::Bool(multiple as jni::sys::jboolean),
+                ],
+            )?
+            .v()
+        })
+        .is_some()
+    }
+
+    /// Show the system's folder picker (`ACTION_OPEN_DOCUMENT_TREE`); the
+    /// documents in the folder chosen arrive through [`take_answers`]
+    /// with `request`, as picked documents (#1926).
+    pub fn open_tree(request: i32) -> bool {
+        with_activity("open document tree", |env, activity| {
+            env.call_method(
+                activity,
+                jni_str!("openDocumentTree"),
+                jni_sig!("(I)V"),
+                &[JValue::Int(request)],
+            )?
+            .v()
+        })
+        .is_some()
+    }
+
+    /// Show the picker for a place to save a new document called `name`
+    /// of type `mime`; the answer arrives through [`take_answers`].
+    pub fn create(request: i32, mime: &str, name: &str) -> bool {
+        with_activity("create document", |env, activity| {
+            let mime = env.new_string(mime)?;
+            let name = env.new_string(name)?;
+            env.call_method(
+                activity,
+                jni_str!("createDocument"),
+                jni_sig!("(ILjava/lang/String;Ljava/lang/String;)V"),
+                &[
+                    JValue::Int(request),
+                    JValue::Object(&mime),
+                    JValue::Object(&name),
+                ],
+            )?
+            .v()
+        })
+        .is_some()
+    }
+
+    /// The answers that arrived since the last call.
+    pub fn take_answers() -> Vec<Answer> {
+        ANSWERS
+            .lock()
+            .map(|mut a| std::mem::take(&mut *a))
+            .unwrap_or_default()
+    }
+
+    /// The whole document at `uri`.
+    pub fn read(uri: &str) -> std::io::Result<Vec<u8>> {
+        let bytes = with_activity("read document", |env, activity| {
+            let uri = env.new_string(uri)?;
+            let result = env
+                .call_method(
+                    activity,
+                    jni_str!("readDocument"),
+                    jni_sig!("(Ljava/lang/String;)[B"),
+                    &[JValue::Object(&uri)],
+                )?
+                .l()?;
+            if result.is_null() {
+                return Ok(None);
+            }
+            let array: JByteArray = env.cast_local::<JByteArray>(result)?;
+            Ok(Some(env.convert_byte_array(&array)?))
+        });
+        match bytes {
+            Some(Some(b)) => Ok(b),
+            _ => Err(std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                format!("{uri} could not be read"),
+            )),
+        }
+    }
+
+    /// Replace the document at `uri` with `bytes`.
+    pub fn write(uri: &str, bytes: &[u8]) -> std::io::Result<()> {
+        let written = with_activity("write document", |env, activity| {
+            let uri = env.new_string(uri)?;
+            let data = env.byte_array_from_slice(bytes)?;
+            env.call_method(
+                activity,
+                jni_str!("writeDocument"),
+                jni_sig!("(Ljava/lang/String;[B)Z"),
+                &[JValue::Object(&uri), JValue::Object(&data)],
+            )?
+            .z()
+        });
+        match written {
+            Some(true) => Ok(()),
+            _ => Err(std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                format!("{uri} could not be written"),
+            )),
+        }
+    }
+}
+
+/// The system clipboard through the activity's clipboard service.
+pub mod clipboard {
+    use super::*;
+    use jni::objects::JString;
+    use jni::{jni_sig, jni_str, JValue};
+
+    /// The clipboard's text, when it holds some and the app is in front.
+    pub fn text() -> Option<String> {
+        with_activity("read clipboard", |env, activity| {
+            let result = env
+                .call_method(
+                    activity,
+                    jni_str!("getClipboardText"),
+                    jni_sig!("()Ljava/lang/String;"),
+                    &[],
+                )?
+                .l()?;
+            let s: JString = env.cast_local::<JString>(result)?;
+            Ok(string_of(env, &s))
+        })
+        .flatten()
+        .filter(|t| !t.is_empty())
+    }
+
+    /// The documents on the clipboard: pictures and files other apps
+    /// copied, as content URIs (#1403).
+    pub fn documents() -> Vec<crate::clipboard::ClipDocument> {
+        let lines = with_activity("read clipboard documents", |env, activity| {
+            let result = env
+                .call_method(
+                    activity,
+                    jni_str!("getClipboardDocuments"),
+                    jni_sig!("()Ljava/lang/String;"),
+                    &[],
+                )?
+                .l()?;
+            let s: JString = env.cast_local::<JString>(result)?;
+            Ok(string_of(env, &s))
+        })
+        .flatten()
+        .unwrap_or_default();
+        crate::clipboard::parse_clip_documents(&lines)
+    }
+
+    /// Put `text` on the clipboard; whether it went there.
+    pub fn set_text(text: &str) -> bool {
+        with_activity("write clipboard", |env, activity| {
+            let text = env.new_string(text)?;
+            env.call_method(
+                activity,
+                jni_str!("setClipboardText"),
+                jni_sig!("(Ljava/lang/String;)Z"),
+                &[JValue::Object(&text)],
+            )?
+            .z()
+        })
+        .unwrap_or(false)
+    }
+}
+
+/// The system's own ways out of the app (#1398): its print service, the
+/// share sheet and "open with". A file handed over is one of the app's
+/// own (a print PDF, a picture to edit, in its private folder), which
+/// the activity's file provider (`SharedFiles.java`) serves to the app
+/// the user picks under a content URI with a grant for that app only.
+pub mod outside {
+    use super::*;
+    use jni::{jni_sig, jni_str, JValue};
+    use std::path::Path;
+
+    /// Hand the PDF at `path` to the system's print service as the job
+    /// `job`: the service's dialog picks the printer, the copies and the
+    /// paper. Whether the dialog opened.
+    pub fn print_pdf(path: &Path, job: &str) -> bool {
+        with_activity("print", |env, activity| {
+            let path = env.new_string(path.display().to_string())?;
+            let job = env.new_string(job)?;
+            env.call_method(
+                activity,
+                jni_str!("printFile"),
+                jni_sig!("(Ljava/lang/String;Ljava/lang/String;)Z"),
+                &[JValue::Object(&path), JValue::Object(&job)],
+            )?
+            .z()
+        })
+        .unwrap_or(false)
+    }
+
+    /// Offer the file at `path` (of type `mime`) to another app through
+    /// the share sheet, with `subject` for a mail; `mail` limits the
+    /// choice to mail apps. Whether the sheet opened.
+    pub fn share(path: &Path, mime: &str, subject: &str, mail: bool) -> bool {
+        with_activity("share", |env, activity| {
+            let path = env.new_string(path.display().to_string())?;
+            let mime = env.new_string(mime)?;
+            let subject = env.new_string(subject)?;
+            env.call_method(
+                activity,
+                jni_str!("shareFile"),
+                jni_sig!("(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Z)Z"),
+                &[
+                    JValue::Object(&path),
+                    JValue::Object(&mime),
+                    JValue::Object(&subject),
+                    JValue::Bool(mail as jni::sys::jboolean),
+                ],
+            )?
+            .z()
+        })
+        .unwrap_or(false)
+    }
+
+    /// Open the file at `path` (of type `mime`) in an app that edits it,
+    /// which may write it back. False when no app on the device edits
+    /// that type.
+    pub fn edit(path: &Path, mime: &str) -> bool {
+        with_activity("edit", |env, activity| {
+            let path = env.new_string(path.display().to_string())?;
+            let mime = env.new_string(mime)?;
+            env.call_method(
+                activity,
+                jni_str!("editFile"),
+                jni_sig!("(Ljava/lang/String;Ljava/lang/String;)Z"),
+                &[JValue::Object(&path), JValue::Object(&mime)],
+            )?
+            .z()
+        })
+        .unwrap_or(false)
+    }
+
+    /// Show `target`, a web address or one of the app's files, in the app
+    /// the system has for it (`mime` for a file, empty for an address).
+    /// False when no app opens it.
+    pub fn view(target: &str, mime: &str) -> bool {
+        with_activity("view", |env, activity| {
+            let target = env.new_string(target)?;
+            let mime = env.new_string(mime)?;
+            env.call_method(
+                activity,
+                jni_str!("viewTarget"),
+                jni_sig!("(Ljava/lang/String;Ljava/lang/String;)Z"),
+                &[JValue::Object(&target), JValue::Object(&mime)],
+            )?
+            .z()
+        })
+        .unwrap_or(false)
+    }
+}
+
+/// The on-screen keyboard (#1309): shown while a frame takes typed text,
+/// and what its input methods compose, commit and delete, which the
+/// activity's invisible text view (`TextInputView.java`) hands over
+/// through the native methods below (see `soft_keyboard.rs`).
+pub mod keyboard {
+    use super::*;
+    use crate::soft_keyboard::{push, Ask, Follower, Typed};
+    use jni::objects::{JObject, JString};
+    use jni::sys::jint;
+    use jni::{jni_sig, jni_str, EnvUnowned, JValue};
+
+    /// What the keyboard was asked last (`soft_keyboard::Follower`).
+    static FOLLOWER: Mutex<Option<Follower>> = Mutex::new(None);
+
+    /// Shows and hides the keyboard after each frame.
+    pub struct Follow;
+
+    impl egui::plugin::Plugin for Follow {
+        fn debug_name(&self) -> &'static str {
+            "soft keyboard"
+        }
+
+        fn output_hook(&mut self, ctx: &egui::Context, output: &mut egui::FullOutput) {
+            let tapped = ctx.input(|i| i.pointer.any_pressed());
+            if follow(crate::soft_keyboard::wanted(output), tapped) {
+                // The frames that let the keyboard hide.
+                ctx.request_repaint();
+            }
+        }
+    }
+
+    /// Show the keyboard when a frame takes typed text (`want`), again
+    /// when a tap (`tapped`) lands while it does, and hide it once frames
+    /// no longer do. Whether a hide is waiting for more frames.
+    fn follow(want: bool, tapped: bool) -> bool {
+        let Ok(mut guard) = FOLLOWER.lock() else {
+            return false;
+        };
+        let follower = guard.get_or_insert_with(Follower::default);
+        let Some(ask) = follower.step(want, tapped) else {
+            return follower.hiding();
+        };
+        let (show, again) = match ask {
+            Ask::Show => (true, false),
+            Ask::ShowAgain => (true, true),
+            Ask::Hide => (false, false),
+        };
+        log::info!(
+            "the on-screen keyboard: {}",
+            match ask {
+                Ask::Show => "show",
+                Ask::ShowAgain => "show again",
+                Ask::Hide => "hide",
+            }
+        );
+        let done = with_activity("show the keyboard", |env, activity| {
+            env.call_method(
+                activity,
+                jni_str!("showTextInput"),
+                jni_sig!("(ZZ)V"),
+                &[
+                    JValue::Bool(show as jni::sys::jboolean),
+                    JValue::Bool(again as jni::sys::jboolean),
+                ],
+            )?
+            .v()
+        });
+        if done.is_none() {
+            // Asked again after the next frame.
+            follower.failed(ask);
+            return true;
+        }
+        false
+    }
+
+    /// Queue what the keyboard did and wake the frame loop.
+    fn typed(t: Typed) {
+        push(t);
+        request_repaint();
+    }
+
+    /// `TraceDrawActivity.nativeImeCompose`: the text being composed.
+    extern "system" fn native_ime_compose<'local>(
+        mut env: EnvUnowned<'local>,
+        _this: JObject<'local>,
+        text: JString<'local>,
+    ) {
+        env.with_env(|env| -> jni::errors::Result<()> {
+            typed(Typed::Compose(string_of(env, &text).unwrap_or_default()));
+            Ok(())
+        })
+        .resolve::<jni::errors::LogErrorAndDefault>();
+    }
+
+    /// `TraceDrawActivity.nativeImeCommit`: text committed.
+    extern "system" fn native_ime_commit<'local>(
+        mut env: EnvUnowned<'local>,
+        _this: JObject<'local>,
+        text: JString<'local>,
+    ) {
+        env.with_env(|env| -> jni::errors::Result<()> {
+            typed(Typed::Commit(string_of(env, &text).unwrap_or_default()));
+            Ok(())
+        })
+        .resolve::<jni::errors::LogErrorAndDefault>();
+    }
+
+    /// `TraceDrawActivity.nativeImeDelete`: characters deleted before and
+    /// after the caret.
+    extern "system" fn native_ime_delete<'local>(
+        _env: EnvUnowned<'local>,
+        _this: JObject<'local>,
+        before: jint,
+        after: jint,
+    ) {
+        typed(Typed::Delete {
+            before: before.clamp(0, 1000) as usize,
+            after: after.clamp(0, 1000) as usize,
+        });
+    }
+
+    /// Bind the keyboard's native methods (on their own, so that the
+    /// document picker's work whatever happens here).
+    pub fn register_natives() {
+        let done = with_activity("register keyboard natives", |env, activity| {
+            let class = env.get_object_class(activity)?;
+            let methods = [
+                // SAFETY: each function has the instance-method shape of
+                // its signature: an unowned env, `this`, then a string or
+                // two ints, returning nothing.
+                unsafe {
+                    jni::NativeMethod::from_raw_parts(
+                        jni_str!("nativeImeCompose"),
+                        jni_str!("(Ljava/lang/String;)V"),
+                        native_ime_compose as *mut std::ffi::c_void,
+                    )
+                },
+                unsafe {
+                    jni::NativeMethod::from_raw_parts(
+                        jni_str!("nativeImeCommit"),
+                        jni_str!("(Ljava/lang/String;)V"),
+                        native_ime_commit as *mut std::ffi::c_void,
+                    )
+                },
+                unsafe {
+                    jni::NativeMethod::from_raw_parts(
+                        jni_str!("nativeImeDelete"),
+                        jni_str!("(II)V"),
+                        native_ime_delete as *mut std::ffi::c_void,
+                    )
+                },
+            ];
+            // SAFETY: as above; the class is the activity's own.
+            unsafe { env.register_native_methods(&class, &methods) }
+        });
+        if done.is_none() {
+            log::error!(
+                "the on-screen keyboard types Latin keys only: native methods not registered"
+            );
+        }
+    }
+}
+
+/// The end of the activity (`TraceDrawActivity.onDestroy`): the system
+/// relaunches it on a change of its resource overlays (configuration
+/// change `0x80000000`, which no `configChanges` entry covers; an
+/// Android 14 emulator does it right after booting) or of the screen
+/// density, or it is finished. `NativeActivity` then waits for
+/// [`android_main`] to return, which it never does (winit ignores the
+/// destroy and runs one event loop per process), so the app froze with
+/// the system's starting window on the screen. The activity instead ends
+/// the process once this thread has given up the window: eframe's save
+/// on suspend, which backs the drawings up, runs before that.
+pub mod ending {
+    use super::*;
+    use jni::objects::JObject;
+    use jni::sys::jlong;
+    use jni::{jni_str, EnvUnowned};
+    use std::time::Duration;
+
+    /// The app, whose window [`native_await_window_gone`] watches.
+    static APP: OnceLock<AndroidApp> = OnceLock::new();
+
+    /// Keep the app for the end of the activity.
+    pub fn keep(app: &AndroidApp) {
+        let _ = APP.set(app.clone());
+    }
+
+    /// `TraceDrawActivity.nativeAwaitWindowGone`: return once the
+    /// editor's thread holds no window (it has handled the window's end,
+    /// backup included, or never had one), or after `timeout_ms`.
+    extern "system" fn native_await_window_gone<'local>(
+        _env: EnvUnowned<'local>,
+        _this: JObject<'local>,
+        timeout_ms: jlong,
+    ) {
+        let timeout = Duration::from_millis(timeout_ms.clamp(0, 60_000) as u64);
+        let gone = crate::android_end::wait_until(
+            || APP.get().is_none_or(|app| app.native_window().is_none()),
+            timeout,
+            Duration::from_millis(10),
+        );
+        if gone {
+            log::info!("the activity ends: the window is gone and the drawings are backed up");
+        } else {
+            log::warn!(
+                "the activity ends: the window was still held after {} ms",
+                timeout.as_millis()
+            );
+        }
+    }
+
+    /// Bind the native method of the activity's end.
+    pub fn register_natives() {
+        let done = with_activity("register end natives", |env, activity| {
+            let class = env.get_object_class(activity)?;
+            let methods = [
+                // SAFETY: the function has the instance-method shape of
+                // its signature: an unowned env, `this` and a long,
+                // returning nothing.
+                unsafe {
+                    jni::NativeMethod::from_raw_parts(
+                        jni_str!("nativeAwaitWindowGone"),
+                        jni_str!("(J)V"),
+                        native_await_window_gone as *mut std::ffi::c_void,
+                    )
+                },
+            ];
+            // SAFETY: as above; the class is the activity's own.
+            unsafe { env.register_native_methods(&class, &methods) }
+        });
+        if done.is_none() {
+            log::error!(
+                "a relaunch ends the app without waiting for the backup: native methods not registered"
+            );
+        }
+    }
+}
+
+/// The system's accessibility settings the interface follows (#1412):
+/// the font scale and the contrast setting, through the activity.
+pub mod accessibility {
+    use super::*;
+    use jni::objects::JString;
+    use jni::{jni_sig, jni_str};
+
+    /// The activity's answer, "font-scale contrast dark" (such as
+    /// "1.3 1 0"), which `system_prefs::parse_android` reads.
+    pub fn read() -> Option<String> {
+        with_activity("accessibility settings", |env, activity| {
+            let result = env
+                .call_method(
+                    activity,
+                    jni_str!("getAccessibility"),
+                    jni_sig!("()Ljava/lang/String;"),
+                    &[],
+                )?
+                .l()?;
+            let s: JString = env.cast_local::<JString>(result)?;
+            Ok(string_of(env, &s))
+        })
+        .flatten()
+    }
+}
+
+/// The screen's safe area (#1917): the room the system bars and the
+/// camera cutout take on each side and the radii of the screen's rounded
+/// corners, in pixels, as the activity last read them at a layout (it
+/// answers at once, without waiting for its UI thread).
+pub mod screen_insets {
+    use super::*;
+    use jni::objects::JString;
+    use jni::{jni_sig, jni_str};
+
+    /// The activity's answer, "top bottom left right tl tr br bl" (such
+    /// as "120 66 0 0 90 90 90 90"), which `screen_margins::parse_system`
+    /// reads; empty before the first layout.
+    pub fn read() -> Option<String> {
+        with_activity("screen insets", |env, activity| {
+            let result = env
+                .call_method(
+                    activity,
+                    jni_str!("getScreenInsets"),
+                    jni_sig!("()Ljava/lang/String;"),
+                    &[],
+                )?
+                .l()?;
+            let s: JString = env.cast_local::<JString>(result)?;
+            Ok(string_of(env, &s))
+        })
+        .flatten()
+    }
+}

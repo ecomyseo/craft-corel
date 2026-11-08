@@ -1,0 +1,25 @@
+[package]
+name = "craft-corel-nativo-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Headless TraceDraw: inspect .cdr files and convert documents"
+
+[dependencies]
+tracedraw-core.workspace = true
+tracedraw-cdr.workspace = true
+tracedraw-io.workspace = true
+tracedraw-render.workspace = true
+tracedraw-text.workspace = true
+env_logger.workspace = true
+log.workspace = true
+flate2 = "1"
+
+[dev-dependencies]
+tracedraw-core = { workspace = true, features = ["test-profiles"] }
+image = { version = "0.25", default-features = false, features = ["png", "bmp"] }
+zip.workspace = true
+
+[[bin]]
+name = "craft-corel-cli"
+path = "src/main.rs"

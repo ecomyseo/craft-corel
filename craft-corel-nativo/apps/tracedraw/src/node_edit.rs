@@ -1,0 +1,1038 @@
+//! More of the Shape tool: Ctrl+click
+//! adds or removes a node, Shift+click selects the run of nodes up to the
+//! one clicked, Tab and Shift+Tab step through the nodes, the selected
+//! nodes can be stretched, scaled, rotated and skewed with handles around
+//! them, Reflect Nodes mirrors a move onto the nodes across the selection,
+//! Elastic mode moves farther nodes less, a freehand marquee selects nodes,
+//! segments between selected nodes can be copied, cut and duplicated,
+//! Extend Curve to Close joins two end nodes, and Curve smoothness removes
+//! nodes.
+
+use crate::app::{App, Handle};
+use egui::Modifiers;
+use std::collections::BTreeMap;
+use tracedraw_core::{
+    Command, Shape, ShapeId,
+    document::ShapeKind,
+    geometry::{Affine, BezPath, Point, Rect, Shape as _, Vec2},
+    nodes,
+};
+
+/// The Shape tool's node transform buttons.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum NodeTransformMode {
+    #[default]
+    None,
+    /// Corner handles scale, side handles stretch.
+    StretchScale,
+    /// Corner handles rotate, side handles skew.
+    RotateSkew,
+}
+
+/// A run of nodes Shift+click selected: from `anchor` to `end`, with or
+/// against the path's direction.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct NodeRun {
+    pub shape: ShapeId,
+    pub anchor: usize,
+    pub end: usize,
+    pub forward: bool,
+}
+
+/// A curve as it was when a node drag began.
+#[derive(Debug, Clone)]
+pub struct StartCurve {
+    pub shape: ShapeId,
+    pub path: BezPath,
+    pub closed: bool,
+    pub transform: Affine,
+    pub indices: Vec<usize>,
+}
+
+/// What the Curve smoothness slider's last change left: the drawing's
+/// revision and the objects and nodes chosen (#1326).
+#[derive(Debug, Clone, PartialEq)]
+pub struct SmoothingMark {
+    pub revision: u64,
+    pub selection: Vec<ShapeId>,
+    pub nodes: Vec<(ShapeId, usize)>,
+}
+
+/// Is `p` inside the polygon `poly` (even-odd)?
+pub fn in_polygon(poly: &[Point], p: Point) -> bool {
+    let mut inside = false;
+    let n = poly.len();
+    if n < 3 {
+        return false;
+    }
+    let mut j = n - 1;
+    for i in 0..n {
+        let (a, b) = (poly[i], poly[j]);
+        if (a.y > p.y) != (b.y > p.y) {
+            let x = a.x + (p.y - a.y) * (b.x - a.x) / (b.y - a.y);
+            if p.x < x {
+                inside = !inside;
+            }
+        }
+        j = i;
+    }
+    inside
+}
+
+/// The affine a node transform handle makes: `handle` dragged from
+/// `from` to `to` over the box `b` (page space). Shift (`center`) works
+/// about the box's centre.
+pub fn handle_transform(
+    mode: NodeTransformMode,
+    handle: Handle,
+    b: Rect,
+    from: Point,
+    to: Point,
+    center: bool,
+) -> Affine {
+    let c = b.center();
+    match mode {
+        NodeTransformMode::None => Affine::IDENTITY,
+        NodeTransformMode::StretchScale => {
+            // The fixed point: the opposite corner or side, or the centre.
+            let (ax, ay) = match handle {
+                Handle::NW => (b.x1, b.y0),
+                Handle::N => (c.x, b.y0),
+                Handle::NE => (b.x0, b.y0),
+                Handle::W => (b.x1, c.y),
+                Handle::E => (b.x0, c.y),
+                Handle::SW => (b.x1, b.y1),
+                Handle::S => (c.x, b.y1),
+                Handle::SE => (b.x0, b.y1),
+            };
+            let anchor = if center { c } else { Point::new(ax, ay) };
+            let ratio = |a: f64, f: f64, t: f64| {
+                let d = f - a;
+                if d.abs() < 1e-9 { 1.0 } else { (t - a) / d }
+            };
+            let (mut sx, mut sy) = (ratio(anchor.x, from.x, to.x), ratio(anchor.y, from.y, to.y));
+            match handle {
+                Handle::N | Handle::S => sx = 1.0,
+                Handle::E | Handle::W => sy = 1.0,
+                _ => {
+                    // Corners scale in proportion.
+                    let k = if sx.abs() > sy.abs() { sx } else { sy };
+                    sx = k;
+                    sy = k;
+                }
+            }
+            Affine::translate(anchor.to_vec2())
+                * Affine::scale_non_uniform(sx, sy)
+                * Affine::translate(-anchor.to_vec2())
+        }
+        NodeTransformMode::RotateSkew => {
+            if handle.is_corner() {
+                let a0 = (from - c).atan2();
+                let a1 = (to - c).atan2();
+                Affine::translate(c.to_vec2())
+                    * Affine::rotate(a1 - a0)
+                    * Affine::translate(-c.to_vec2())
+            } else {
+                // Side handles skew along their side, about the centre.
+                let h = (b.height() / 2.0).max(1e-9);
+                let w = (b.width() / 2.0).max(1e-9);
+                let skew = match handle {
+                    Handle::N => Affine::new([1.0, 0.0, (to.x - from.x) / h, 1.0, 0.0, 0.0]),
+                    Handle::S => Affine::new([1.0, 0.0, -(to.x - from.x) / h, 1.0, 0.0, 0.0]),
+                    Handle::E => Affine::new([1.0, (to.y - from.y) / w, 0.0, 1.0, 0.0, 0.0]),
+                    _ => Affine::new([1.0, -(to.y - from.y) / w, 0.0, 1.0, 0.0, 0.0]),
+                };
+                Affine::translate(c.to_vec2()) * skew * Affine::translate(-c.to_vec2())
+            }
+        }
+    }
+}
+
+impl App {
+    fn curve_of(&self, id: ShapeId) -> Option<(BezPath, bool, Affine)> {
+        let s = self.doc().find_shape(id)?;
+        let parent = self.doc().parent_transform(id)?;
+        match &s.kind {
+            // A B-spline's control points are edited, not its nodes.
+            ShapeKind::Path { .. } if s.spline.is_some() => None,
+            ShapeKind::Path { path, closed } => Some((path.clone(), *closed, parent * s.transform)),
+            _ => None,
+        }
+    }
+
+    /// The selected nodes, by curve.
+    pub fn nodes_by_shape(&self) -> BTreeMap<ShapeId, Vec<usize>> {
+        let mut out: BTreeMap<ShapeId, Vec<usize>> = BTreeMap::new();
+        for (id, i) in &self.node_selection {
+            out.entry(*id).or_default().push(*i);
+        }
+        out
+    }
+
+    /// Where the selected nodes are on the page.
+    pub fn selected_node_points(&self) -> Vec<(ShapeId, usize, Point)> {
+        let mut out = Vec::new();
+        for (id, idxs) in self.nodes_by_shape() {
+            let Some((path, _, t)) = self.curve_of(id) else {
+                continue;
+            };
+            for n in nodes::nodes(&path) {
+                if idxs.contains(&n.index) {
+                    out.push((id, n.index, t * n.pos));
+                }
+            }
+        }
+        out
+    }
+
+    /// The box around the selected nodes, when there are two or more.
+    pub fn selected_nodes_bounds(&self) -> Option<Rect> {
+        let pts = self.selected_node_points();
+        if pts.len() < 2 {
+            return None;
+        }
+        let mut r = Rect::from_points(pts[0].2, pts[0].2);
+        for (_, _, p) in &pts[1..] {
+            r = r.union_pt(*p);
+        }
+        Some(r)
+    }
+
+    /// The node transform handles (page space) while a transform mode is on.
+    pub fn node_transform_handles(&self) -> Vec<(Handle, Point)> {
+        if self.node_transform == NodeTransformMode::None {
+            return Vec::new();
+        }
+        let Some(b) = self.selected_nodes_bounds() else {
+            return Vec::new();
+        };
+        let c = b.center();
+        vec![
+            (Handle::NW, Point::new(b.x0, b.y1)),
+            (Handle::N, Point::new(c.x, b.y1)),
+            (Handle::NE, Point::new(b.x1, b.y1)),
+            (Handle::W, Point::new(b.x0, c.y)),
+            (Handle::E, Point::new(b.x1, c.y)),
+            (Handle::SW, Point::new(b.x0, b.y0)),
+            (Handle::S, Point::new(c.x, b.y0)),
+            (Handle::SE, Point::new(b.x1, b.y0)),
+        ]
+    }
+
+    /// The node transform handle under the pointer.
+    pub fn node_transform_handle_at(&self, p: Point) -> Option<Handle> {
+        let tol = 5.0 / self.view.zoom.max(1e-6) as f64;
+        self.node_transform_handles()
+            .into_iter()
+            .find(|(_, q)| (*q - p).hypot() <= tol)
+            .map(|(h, _)| h)
+    }
+
+    /// The selected curves with their selected nodes, as they are now.
+    pub fn start_curves(&self) -> Vec<StartCurve> {
+        self.nodes_by_shape()
+            .into_iter()
+            .filter_map(|(id, indices)| {
+                let (path, closed, transform) = self.curve_of(id)?;
+                Some(StartCurve {
+                    shape: id,
+                    path,
+                    closed,
+                    transform,
+                    indices,
+                })
+            })
+            .collect()
+    }
+
+    /// Apply the page-space affine `a` to the selected nodes of `start`;
+    /// the first step of a drag is recorded, later ones join it.
+    pub fn transform_start_nodes(&mut self, start: &[StartCurve], a: Affine, begun: bool) {
+        let cmds: Vec<Command> = start
+            .iter()
+            .map(|c| {
+                let local = c.transform.inverse() * a * c.transform;
+                Command::SetShapeKind {
+                    shape: c.shape,
+                    kind: ShapeKind::Path {
+                        path: nodes::transform_nodes(&c.path, &c.indices, local),
+                        closed: c.closed,
+                    },
+                }
+            })
+            .collect();
+        if cmds.is_empty() {
+            return;
+        }
+        if begun {
+            for cmd in &cmds {
+                let _ = self.engine.amend(cmd);
+            }
+        } else {
+            let _ = self.engine.run_batch("Transform Nodes", &cmds);
+        }
+    }
+
+    /// Move the selected nodes from where `start` had them by the page
+    /// delta `d`, with Reflect Nodes and Elastic mode; `grab` is the node
+    /// the drag began on.
+    pub fn move_start_nodes(&mut self, start: &[StartCurve], d: Vec2, grab: Point, begun: bool) {
+        // Every selected node's page position, for the mirror axis and the
+        // elastic weights.
+        let mut all: Vec<Point> = Vec::new();
+        for c in start {
+            for n in nodes::nodes(&c.path) {
+                if c.indices.contains(&n.index) {
+                    all.push(c.transform * n.pos);
+                }
+            }
+        }
+        if all.is_empty() {
+            return;
+        }
+        let (mut x0, mut x1, mut y0, mut y1) = (f64::MAX, f64::MIN, f64::MAX, f64::MIN);
+        for p in &all {
+            x0 = x0.min(p.x);
+            x1 = x1.max(p.x);
+            y0 = y0.min(p.y);
+            y1 = y1.max(p.y);
+        }
+        let axis = Point::new((x0 + x1) / 2.0, (y0 + y1) / 2.0);
+        let far = all
+            .iter()
+            .map(|p| (*p - grab).hypot())
+            .fold(0.0, f64::max)
+            .max(1e-9);
+        let (rh, rv) = self.reflect_nodes;
+        let side = |v: f64, a: f64| {
+            if v < a - 1e-9 {
+                -1
+            } else if v > a + 1e-9 {
+                1
+            } else {
+                0
+            }
+        };
+        let mut cmds = Vec::new();
+        for c in start {
+            let inv = c.transform.inverse();
+            let mut path = c.path.clone();
+            for n in nodes::nodes(&c.path) {
+                if !c.indices.contains(&n.index) {
+                    continue;
+                }
+                let p = c.transform * n.pos;
+                let mut dd = d;
+                // Reflect: nodes across the axis from the grabbed one move
+                // the mirrored way.
+                if rh && side(p.x, axis.x) != 0 && side(p.x, axis.x) != side(grab.x, axis.x) {
+                    dd.x = -dd.x;
+                }
+                if rv && side(p.y, axis.y) != 0 && side(p.y, axis.y) != side(grab.y, axis.y) {
+                    dd.y = -dd.y;
+                }
+                if self.elastic_mode {
+                    // Nodes farther from the grabbed one move less.
+                    let w = 1.0 - 0.5 * (p - grab).hypot() / far;
+                    dd *= w;
+                }
+                let ld = (inv * (Point::ZERO + dd)) - (inv * Point::ZERO);
+                path = nodes::move_node(&path, n.index, ld);
+            }
+            cmds.push(Command::SetShapeKind {
+                shape: c.shape,
+                kind: ShapeKind::Path {
+                    path,
+                    closed: c.closed,
+                },
+            });
+        }
+        if begun {
+            for cmd in &cmds {
+                let _ = self.engine.amend(cmd);
+            }
+        } else {
+            let _ = self.engine.run_batch("Move Nodes", &cmds);
+        }
+    }
+
+    /// A click on a node: alone, Ctrl adds or removes it, Shift selects
+    /// the run of nodes from the last one selected to it (the shorter way
+    /// round a closed subpath); Shift+clicking the end of that run again
+    /// selects the other way round instead.
+    pub fn click_node(&mut self, key: (ShapeId, usize), mods: Modifiers) {
+        if mods.command || mods.ctrl {
+            self.node_run = None;
+            if let Some(i) = self.node_selection.iter().position(|k| *k == key) {
+                self.node_selection.remove(i);
+            } else {
+                self.node_selection.push(key);
+            }
+            return;
+        }
+        if !mods.shift {
+            self.node_run = None;
+            self.node_selection = vec![key];
+            return;
+        }
+        let Some((path, _, _)) = self.curve_of(key.0) else {
+            if !self.node_selection.contains(&key) {
+                self.node_selection.push(key);
+            }
+            return;
+        };
+        // The end of the last run clicked again: the other way round.
+        if let Some(run) = self.node_run {
+            let same = run.shape == key.0
+                && run.end == key.1
+                && self.node_selection.last() == Some(&key)
+                && self.node_selection.contains(&(run.shape, run.anchor));
+            if same {
+                if let Some((other, dir)) =
+                    nodes::node_run(&path, run.anchor, run.end, Some(!run.forward))
+                {
+                    let old = nodes::node_run(&path, run.anchor, run.end, Some(run.forward))
+                        .map(|r| r.0)
+                        .unwrap_or_default();
+                    self.node_selection
+                        .retain(|(id, i)| *id != key.0 || !old.contains(i));
+                    self.add_run(key.0, &other);
+                    self.node_run = Some(NodeRun {
+                        forward: dir,
+                        ..run
+                    });
+                }
+                return;
+            }
+        }
+        if let Some(&(id, last)) = self.node_selection.last() {
+            if id == key.0 && last != key.1 {
+                if let Some((run, dir)) = nodes::node_run(&path, last, key.1, None) {
+                    self.add_run(id, &run);
+                    self.node_run = Some(NodeRun {
+                        shape: id,
+                        anchor: last,
+                        end: key.1,
+                        forward: dir,
+                    });
+                    return;
+                }
+            }
+        }
+        // The first node of a run, or one on another subpath.
+        self.node_run = None;
+        if !self.node_selection.contains(&key) {
+            self.node_selection.push(key);
+        }
+    }
+
+    /// Add a run of nodes to the node selection, its last node last.
+    fn add_run(&mut self, id: ShapeId, run: &[usize]) {
+        for i in run {
+            self.node_selection.retain(|k| *k != (id, *i));
+            self.node_selection.push((id, *i));
+        }
+    }
+
+    /// Tab and Shift+Tab with the Shape tool: the next or previous node of
+    /// the curve; true when it did something.
+    pub fn cycle_node(&mut self, forward: bool) -> bool {
+        let Some(&(id, cur)) = self.node_selection.last() else {
+            return false;
+        };
+        let Some((path, _, _)) = self.curve_of(id) else {
+            return false;
+        };
+        let list: Vec<usize> = nodes::nodes(&path).into_iter().map(|n| n.index).collect();
+        let Some(k) = list.iter().position(|i| *i == cur) else {
+            return false;
+        };
+        let n = list.len();
+        let next = if forward {
+            (k + 1) % n
+        } else {
+            (k + n - 1) % n
+        };
+        self.node_selection = vec![(id, list[next])];
+        self.segment_spot = None;
+        true
+    }
+
+    /// Choose the first (`first`) or last node of the curve whose node was
+    /// chosen last; false when there is none.
+    pub fn select_end_node(&mut self, first: bool) -> bool {
+        let Some(&(id, _)) = self.node_selection.last() else {
+            return false;
+        };
+        let Some((path, _, _)) = self.curve_of(id) else {
+            return false;
+        };
+        let list = nodes::nodes(&path);
+        let end = if first { list.first() } else { list.last() };
+        match end {
+            Some(n) => {
+                self.node_selection = vec![(id, n.index)];
+                self.segment_spot = None;
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// Move the chosen nodes by `d` (page millimetres), one undo step: the
+    /// arrow keys with the Shape tool.
+    pub fn nudge_nodes(&mut self, d: Vec2) {
+        let start = self.start_curves();
+        let Some(grab) = self.selected_node_points().first().map(|(_, _, p)| *p) else {
+            return;
+        };
+        self.move_start_nodes(&start, d, grab, false);
+    }
+
+    /// Select the nodes of the selected curves inside a freehand marquee.
+    pub fn finish_node_lasso(&mut self, poly: &[Point]) {
+        let mut sel = Vec::new();
+        for id in self.selection.clone() {
+            let Some((path, _, t)) = self.curve_of(id) else {
+                continue;
+            };
+            for n in nodes::nodes(&path) {
+                if in_polygon(poly, t * n.pos) {
+                    sel.push((id, n.index));
+                }
+            }
+        }
+        sel.extend(self.spline_points_where(|q| in_polygon(poly, q)));
+        // Alt+Shift: added to the nodes chosen already (#1341).
+        if std::mem::take(&mut self.node_lasso_keeps) {
+            let mut kept = std::mem::take(&mut self.node_selection);
+            kept.retain(|k| !sel.contains(k));
+            kept.extend(sel);
+            sel = kept;
+        }
+        self.node_selection = sel;
+        self.rect_corners_selected =
+            crate::kind_nodes::corners_where(&self.shape_tool_shapes(), |q| in_polygon(poly, q));
+        self.choose_chars_in(|q| in_polygon(poly, q));
+    }
+
+    /// The segments between selected nodes as new curves, styled like
+    /// their curve (page space, ready to paste or place).
+    fn selected_segment_shapes(&self) -> Vec<Shape> {
+        let mut out = Vec::new();
+        for (id, idxs) in self.nodes_by_shape() {
+            let Some(s) = self.doc().find_shape(id).cloned() else {
+                continue;
+            };
+            let ShapeKind::Path { path, .. } = &s.kind else {
+                continue;
+            };
+            let segs = nodes::selected_segments(path, &idxs);
+            if segs.elements().is_empty() {
+                continue;
+            }
+            let mut piece = s.clone();
+            piece.kind = ShapeKind::Path {
+                path: segs,
+                closed: false,
+            };
+            piece.effects.clear();
+            out.push(piece);
+        }
+        out
+    }
+
+    /// Ctrl+C with segments chosen in the Shape tool; true when it copied.
+    pub fn copy_segments(&mut self) -> bool {
+        let shapes = self.selected_segment_shapes();
+        if shapes.is_empty() {
+            return false;
+        }
+        let native = match self.native_payload_for_selection(&shapes) {
+            Ok(payload) => payload,
+            Err(error) => {
+                self.status = crate::i18n::trf("status.import_failed", &[("e", &error)]);
+                return false;
+            }
+        };
+        self.clipboard = Some(crate::app::Clipboard::from_native(native));
+        self.mark_system_clipboard(None);
+        true
+    }
+
+    /// Ctrl+X: copy the segments, then take them out of their curves.
+    pub fn cut_segments(&mut self) -> bool {
+        if !self.copy_segments() {
+            return false;
+        }
+        let mut cmds = Vec::new();
+        for (id, idxs) in self.nodes_by_shape() {
+            let Some((path, _, _)) = self.curve_of(id) else {
+                continue;
+            };
+            let left = nodes::without_segments(&path, &idxs);
+            if left.elements().is_empty() {
+                cmds.push(Command::DeleteShapes { shapes: vec![id] });
+            } else {
+                cmds.push(Command::SetShapeKind {
+                    shape: id,
+                    kind: ShapeKind::Path {
+                        path: left,
+                        closed: false,
+                    },
+                });
+            }
+        }
+        if let Err(e) = self.engine.run_batch("Cut Segments", &cmds) {
+            self.status = e.to_string();
+        }
+        self.node_selection.clear();
+        true
+    }
+
+    /// Ctrl+D: the segments as new curves at the duplicate offset.
+    pub fn duplicate_segments(&mut self) -> bool {
+        let shapes = self.selected_segment_shapes();
+        if shapes.is_empty() {
+            return false;
+        }
+        let Some(layer) = self.active_layer() else {
+            return false;
+        };
+        let mut ids = Vec::new();
+        let mut cmds = Vec::new();
+        for mut s in shapes {
+            let id = self.engine.new_shape_id();
+            s.id = id;
+            s.transform_by(Affine::translate(self.duplicate_offset));
+            ids.push(id);
+            cmds.push(Command::AddShape { layer, shape: s });
+        }
+        if let Err(e) = self.engine.run_batch("Duplicate Segments", &cmds) {
+            self.status = e.to_string();
+        }
+        self.select(ids);
+        true
+    }
+
+    /// Extend Curve to Close: two selected end nodes of one curve are
+    /// joined by a straight segment (closing a subpath, or making one of
+    /// two).
+    pub fn extend_curve_to_close(&mut self) {
+        let by = self.nodes_by_shape();
+        let Some((id, idxs)) = by.into_iter().find(|(_, v)| v.len() == 2) else {
+            return;
+        };
+        let Some((path, closed, _)) = self.curve_of(id) else {
+            return;
+        };
+        if let Some(np) = nodes::connect_ends(&path, idxs[0], idxs[1]) {
+            let all_closed = np
+                .elements()
+                .iter()
+                .filter(|e| matches!(e, tracedraw_core::geometry::PathEl::MoveTo(_)))
+                .count()
+                == np
+                    .elements()
+                    .iter()
+                    .filter(|e| matches!(e, tracedraw_core::geometry::PathEl::ClosePath))
+                    .count();
+            self.run(Command::SetShapeKind {
+                shape: id,
+                kind: ShapeKind::Path {
+                    path: np,
+                    closed: closed || all_closed,
+                },
+            });
+            self.node_selection.clear();
+        }
+    }
+
+    /// Curve smoothness (0 to 100): remove nodes of the curves as they
+    /// were when the slider was taken; the selected nodes only when some
+    /// are selected. The first change is recorded, later ones join it.
+    pub fn smooth_curves(&mut self, start: &[StartCurve], amount: f64, begun: bool) {
+        let mut cmds = Vec::new();
+        for c in start {
+            let b = c.path.bounding_box();
+            let size = b.width().max(b.height()).max(1e-6);
+            let tol = (amount.clamp(0.0, 100.0) / 100.0).powi(2) * size * 0.1;
+            let path = if c.indices.is_empty() {
+                nodes::reduce_nodes(&c.path, tol)
+            } else {
+                nodes::reduce_chosen_nodes(&c.path, &c.indices, tol)
+            };
+            cmds.push(Command::SetShapeKind {
+                shape: c.shape,
+                kind: ShapeKind::Path {
+                    path,
+                    closed: c.closed,
+                },
+            });
+        }
+        if cmds.is_empty() {
+            return;
+        }
+        if begun {
+            for cmd in &cmds {
+                let _ = self.engine.amend(cmd);
+            }
+        } else {
+            let _ = self.engine.run_batch("Curve Smoothness", &cmds);
+        }
+    }
+
+    /// The Curve smoothness slider set to `amount` (0 to 100), dragged,
+    /// typed or stepped with the wheel or the arrows: the curves as they
+    /// were at its first change lose nodes for that amount, all its
+    /// changes one undo step. The slider keeps the value, so a typed value
+    /// or a step goes on from it rather than from 0 (#1326).
+    pub fn set_curve_smoothness(&mut self, amount: f64) {
+        self.forget_smoothing_if_stale();
+        let first = self.smoothing.is_none();
+        if first {
+            self.smoothing = Some(self.smoothing_curves());
+        }
+        self.curve_smoothness = amount;
+        let start = self.smoothing.clone().unwrap_or_default();
+        self.smooth_curves(&start, amount, !first);
+        self.smoothing_mark = Some(SmoothingMark {
+            revision: self.engine.revision(),
+            selection: self.selection.clone(),
+            nodes: self.node_selection.clone(),
+        });
+    }
+
+    /// The slider starts again at 0, from the curves as they are, once
+    /// anything else happened since its last change: an undo, a node
+    /// moved or added, other objects or nodes chosen (#1326).
+    pub fn forget_smoothing_if_stale(&mut self) {
+        let fresh = self.smoothing_mark.as_ref().is_some_and(|m| {
+            m.revision == self.engine.revision()
+                && m.selection == self.selection
+                && m.nodes == self.node_selection
+        });
+        if !fresh {
+            self.smoothing = None;
+            self.smoothing_mark = None;
+            self.curve_smoothness = 0.0;
+        }
+    }
+
+    /// The curves the smoothness slider works on: the curves with
+    /// selected nodes, else every selected curve (all its nodes).
+    pub fn smoothing_curves(&self) -> Vec<StartCurve> {
+        let chosen = self.start_curves();
+        if !chosen.is_empty() {
+            return chosen;
+        }
+        self.selection
+            .iter()
+            .filter_map(|id| {
+                let (path, closed, transform) = self.curve_of(*id)?;
+                Some(StartCurve {
+                    shape: *id,
+                    path,
+                    closed,
+                    transform,
+                    indices: Vec::new(),
+                })
+            })
+            .collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    fn app_with_square() -> (App, ShapeId) {
+        let mut app = App::headless();
+        let id = app
+            .new_shape(ShapeKind::Path {
+                path: Rect::new(0.0, 0.0, 10.0, 10.0).to_path(0.01),
+                closed: true,
+            })
+            .expect("a square");
+        app.select(vec![id]);
+        app.tool = crate::tools::Tool::Shape;
+        (app, id)
+    }
+
+    #[test]
+    fn ctrl_toggles_and_shift_selects_a_run() {
+        let (mut app, id) = app_with_square();
+        app.click_node((id, 0), Modifiers::NONE);
+        app.click_node((id, 2), Modifiers::SHIFT);
+        assert_eq!(app.node_selection, vec![(id, 0), (id, 1), (id, 2)]);
+        // Shift+click the end again: the other way round, and back.
+        app.click_node((id, 2), Modifiers::SHIFT);
+        assert_eq!(app.node_selection, vec![(id, 0), (id, 3), (id, 2)]);
+        app.click_node((id, 2), Modifiers::SHIFT);
+        assert_eq!(app.node_selection, vec![(id, 0), (id, 1), (id, 2)]);
+        app.click_node((id, 1), Modifiers::CTRL);
+        assert_eq!(app.node_selection, vec![(id, 0), (id, 2)]);
+        app.click_node((id, 3), Modifiers::CTRL);
+        assert_eq!(app.node_selection.len(), 3);
+        app.click_node((id, 1), Modifiers::NONE);
+        assert_eq!(app.node_selection, vec![(id, 1)]);
+        // Tab walks on, wrapping round.
+        assert!(app.cycle_node(true));
+        assert_eq!(app.node_selection, vec![(id, 2)]);
+        app.node_selection = vec![(id, 0)];
+        assert!(app.cycle_node(false));
+        assert_eq!(app.node_selection, vec![(id, 3)]);
+    }
+
+    #[test]
+    fn handles_scale_rotate_and_skew_the_chosen_nodes() {
+        let (mut app, id) = app_with_square();
+        app.node_selection = vec![(id, 1), (id, 2)];
+        app.node_transform = NodeTransformMode::StretchScale;
+        let b = app.selected_nodes_bounds().unwrap();
+        assert_eq!(b, Rect::new(10.0, 0.0, 10.0, 10.0));
+        assert_eq!(app.node_transform_handles().len(), 8);
+        // The top side dragged up 10 mm stretches the right side to 20.
+        let a = handle_transform(
+            app.node_transform,
+            Handle::N,
+            b,
+            Point::new(10.0, 10.0),
+            Point::new(10.0, 20.0),
+            false,
+        );
+        let start = app.start_curves();
+        app.transform_start_nodes(&start, a, false);
+        let pts: Vec<Point> = app
+            .selected_node_points()
+            .into_iter()
+            .map(|(_, _, p)| p)
+            .collect();
+        assert!(pts.contains(&Point::new(10.0, 20.0)), "{pts:?}");
+        assert!(pts.contains(&Point::new(10.0, 0.0)), "{pts:?}");
+        // A quarter turn about the centre.
+        let r = handle_transform(
+            NodeTransformMode::RotateSkew,
+            Handle::NE,
+            Rect::new(0.0, 0.0, 10.0, 10.0),
+            Point::new(10.0, 10.0),
+            Point::new(0.0, 10.0),
+            false,
+        );
+        let q = r * Point::new(10.0, 5.0);
+        assert!((q - Point::new(5.0, 10.0)).hypot() < 1e-9, "{q:?}");
+        // Skewing by the top handle leaves the middle line where it is.
+        let k = handle_transform(
+            NodeTransformMode::RotateSkew,
+            Handle::N,
+            Rect::new(0.0, 0.0, 10.0, 10.0),
+            Point::new(5.0, 10.0),
+            Point::new(8.0, 10.0),
+            false,
+        );
+        assert!((k * Point::new(0.0, 5.0) - Point::new(0.0, 5.0)).hypot() < 1e-9);
+        assert!((k * Point::new(0.0, 10.0) - Point::new(3.0, 10.0)).hypot() < 1e-9);
+    }
+
+    #[test]
+    fn reflect_and_elastic_moves() {
+        let (mut app, id) = app_with_square();
+        // Bottom corners: the right one dragged right by 2 mm.
+        app.node_selection = vec![(id, 0), (id, 1)];
+        app.reflect_nodes = (true, false);
+        let start = app.start_curves();
+        app.move_start_nodes(&start, Vec2::new(2.0, 1.0), Point::new(10.0, 0.0), false);
+        let pts: Vec<Point> = app
+            .selected_node_points()
+            .into_iter()
+            .map(|(_, _, p)| p)
+            .collect();
+        assert!(pts.contains(&Point::new(12.0, 1.0)), "{pts:?}");
+        assert!(pts.contains(&Point::new(-2.0, 1.0)), "{pts:?}");
+        // Elastic: the far node moves half as much.
+        app.undo();
+        app.reflect_nodes = (false, false);
+        app.elastic_mode = true;
+        let start = app.start_curves();
+        app.move_start_nodes(&start, Vec2::new(0.0, 4.0), Point::new(10.0, 0.0), false);
+        let pts: Vec<Point> = app
+            .selected_node_points()
+            .into_iter()
+            .map(|(_, _, p)| p)
+            .collect();
+        assert!(pts.contains(&Point::new(10.0, 4.0)), "{pts:?}");
+        assert!(pts.contains(&Point::new(0.0, 2.0)), "{pts:?}");
+    }
+
+    #[test]
+    fn segments_copy_cut_and_duplicate() {
+        let (mut app, id) = app_with_square();
+        app.node_selection = vec![(id, 1), (id, 2)];
+        assert!(app.copy_segments());
+        assert_eq!(app.clipboard.as_ref().map(|c| c.shapes.len()), Some(1));
+        assert!(app.duplicate_segments());
+        assert_eq!(app.selection.len(), 1);
+        assert_ne!(app.selection[0], id);
+        app.select(vec![id]);
+        app.node_selection = vec![(id, 1), (id, 2)];
+        assert!(app.cut_segments());
+        let s = app.doc().find_shape(id).cloned().unwrap();
+        let ShapeKind::Path { path, closed } = &s.kind else {
+            panic!();
+        };
+        assert!(!closed);
+        assert_eq!(nodes::nodes(path).len(), 4);
+        // Nothing chosen: nothing to copy.
+        app.node_selection.clear();
+        assert!(!app.copy_segments());
+    }
+
+    #[test]
+    fn a_freehand_marquee_picks_the_nodes_inside() {
+        let (mut app, id) = app_with_square();
+        let lasso = [
+            Point::new(-1.0, -1.0),
+            Point::new(11.0, -1.0),
+            Point::new(11.0, 1.0),
+            Point::new(-1.0, 1.0),
+        ];
+        app.finish_node_lasso(&lasso);
+        assert_eq!(app.node_selection, vec![(id, 0), (id, 1)]);
+        assert!(in_polygon(&lasso, Point::new(5.0, 0.0)));
+        assert!(!in_polygon(&lasso, Point::new(5.0, 5.0)));
+        assert!(!in_polygon(&lasso[..2], Point::new(5.0, 0.0)));
+    }
+
+    #[test]
+    fn extend_to_close_and_smoothness() {
+        let mut app = App::headless();
+        let mut p = BezPath::new();
+        p.move_to((0.0, 0.0));
+        p.line_to((5.0, 0.1));
+        p.line_to((10.0, 0.0));
+        p.line_to((10.0, 10.0));
+        let id = app
+            .new_shape(ShapeKind::Path {
+                path: p,
+                closed: false,
+            })
+            .unwrap();
+        app.select(vec![id]);
+        app.tool = crate::tools::Tool::Shape;
+        // Smoothness 100 removes the nearly straight node.
+        let start = app.smoothing_curves();
+        app.smooth_curves(&start, 100.0, false);
+        let s = app.doc().find_shape(id).cloned().unwrap();
+        assert_eq!(nodes::nodes(&s.local_path()).len(), 3);
+        // The two ends joined: closed.
+        app.node_selection = vec![(id, 0), (id, 2)];
+        app.extend_curve_to_close();
+        let s = app.doc().find_shape(id).cloned().unwrap();
+        assert!(matches!(s.kind, ShapeKind::Path { closed: true, .. }));
+    }
+
+    /// A wavy open curve of many nodes, selected in the Shape tool.
+    fn app_with_wave() -> (App, ShapeId) {
+        let mut app = App::headless();
+        let mut p = BezPath::new();
+        p.move_to((0.0, 0.0));
+        for i in 1..=60 {
+            let x = i as f64;
+            p.line_to((x, (x * 0.7).sin() * 3.0 + (x * 0.13).sin() * 6.0));
+        }
+        let id = app
+            .new_shape(ShapeKind::Path {
+                path: p,
+                closed: false,
+            })
+            .expect("wave");
+        app.select(vec![id]);
+        app.tool = crate::tools::Tool::Shape;
+        (app, id)
+    }
+
+    fn node_count(app: &App, id: ShapeId) -> usize {
+        let s = app.doc().find_shape(id).cloned().expect("curve");
+        nodes::nodes(&s.local_path()).len()
+    }
+
+    /// The Curve smoothness slider keeps a typed value or a wheel step:
+    /// the next one works from the curve as it was at the first change,
+    /// not from 0 on the reduced curve, all of it one undo step; anything
+    /// else done since starts it again at 0 (#1326).
+    #[test]
+    fn the_smoothness_slider_keeps_its_value_between_changes() {
+        let (mut app, id) = app_with_wave();
+        let start = app.doc().find_shape(id).cloned().expect("curve");
+        let original = start.local_path();
+        let before = app.engine.history_labels().0.len();
+        // Typed 40, then the frames after it.
+        app.set_curve_smoothness(40.0);
+        app.forget_smoothing_if_stale();
+        app.forget_smoothing_if_stale();
+        assert_eq!(app.curve_smoothness, 40.0, "kept");
+        let at_40 = node_count(&app, id);
+        assert!(at_40 < nodes::nodes(&original).len());
+        // A wheel step to 41: from the first curve, as 41 from the start.
+        app.set_curve_smoothness(41.0);
+        app.forget_smoothing_if_stale();
+        assert_eq!(app.curve_smoothness, 41.0);
+        let b = original.bounding_box();
+        let size = b.width().max(b.height());
+        let tol = |v: f64| (v / 100.0).powi(2) * size * 0.1;
+        let expect = nodes::reduce_nodes(&original, tol(41.0));
+        let now = app.doc().find_shape(id).cloned().expect("curve");
+        assert_eq!(now.local_path(), expect);
+        // Back down to 0: every node again.
+        app.set_curve_smoothness(0.0);
+        assert_eq!(node_count(&app, id), nodes::nodes(&original).len());
+        app.set_curve_smoothness(40.0);
+        assert_eq!(node_count(&app, id), at_40);
+        // One undo step for all of it.
+        assert_eq!(app.engine.history_labels().0.len(), before + 1);
+        // Undone: the slider is at 0 again, over the curve undone to.
+        app.undo();
+        app.forget_smoothing_if_stale();
+        assert_eq!(app.curve_smoothness, 0.0);
+        assert_eq!(node_count(&app, id), nodes::nodes(&original).len());
+        // Other nodes chosen: 0 again.
+        app.set_curve_smoothness(30.0);
+        app.node_selection = vec![(id, 3)];
+        app.forget_smoothing_if_stale();
+        assert_eq!(app.curve_smoothness, 0.0);
+    }
+
+    /// Add Nodes keeps the nodes chosen, with the new ones, so each press
+    /// doubles the segments again; on a closed curve the closing segment
+    /// gets its node too (#1326).
+    #[test]
+    fn add_nodes_again_keeps_doubling() {
+        let (mut app, id) = app_with_square();
+        assert_eq!(node_count(&app, id), 4);
+        app.select_all_nodes();
+        app.add_node_midpoints();
+        assert_eq!(node_count(&app, id), 8);
+        assert_eq!(app.node_selection.len(), 8, "{:?}", app.node_selection);
+        app.add_node_midpoints();
+        assert_eq!(node_count(&app, id), 16);
+        assert_eq!(app.node_selection.len(), 16);
+        // Every chosen one is a node of the curve.
+        let s = app.doc().find_shape(id).cloned().expect("curve");
+        let all: Vec<usize> = nodes::nodes(&s.local_path())
+            .iter()
+            .map(|n| n.index)
+            .collect();
+        assert!(app.node_selection.iter().all(|(_, i)| all.contains(i)));
+        // The square's corners stay where they were.
+        let b = s.local_path().bounding_box();
+        assert!((b.width() - 10.0).abs() < 1e-9 && (b.height() - 10.0).abs() < 1e-9);
+        // An open curve: two nodes, one segment, then three nodes.
+        let (mut app, id) = app_with_wave();
+        app.node_selection = vec![(id, 0), (id, 1)];
+        app.add_node_midpoints();
+        assert_eq!(node_count(&app, id), 62);
+        assert_eq!(app.node_selection, vec![(id, 0), (id, 1), (id, 2)]);
+        app.add_node_midpoints();
+        assert_eq!(node_count(&app, id), 64);
+        assert_eq!(app.node_selection.len(), 5);
+    }
+}

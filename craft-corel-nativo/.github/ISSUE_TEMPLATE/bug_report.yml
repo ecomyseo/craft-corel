@@ -1,0 +1,56 @@
+name: Bug report
+description: Something does not work as it should.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        One problem per issue, please: a report with several problems is hard to follow and to close. Something TraceDraw does not do yet is a **Feature request**; a `.cdr` file that opens wrong has its own form.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected and what happened instead.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to repeat it
+      placeholder: |
+        1. Draw a rectangle
+        2. Choose Object > ...
+        3. ...
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Where
+      options:
+        - Windows
+        - macOS
+        - Linux
+        - In the browser
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: TraceDraw version
+      description: Help > About, or the name of the file you downloaded (for example 0.19.10). Check the problem still happens in the latest release.
+      placeholder: "0.19.10"
+    validations:
+      required: true
+  - type: textarea
+    id: files
+    attributes:
+      label: Files and screenshots
+      description: A drawing that shows the problem (zipped, as GitHub takes no .tdraw or .cdr files), a screenshot or short video, or the last lines of tracedraw.log if TraceDraw stopped. A problem we can repeat on our side gets fixed first.
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before sending
+      options:
+        - label: This issue is about one problem only.
+          required: true
+        - label: It still happens in the latest release.
+          required: true

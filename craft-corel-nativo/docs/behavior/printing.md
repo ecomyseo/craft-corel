@@ -1,0 +1,433 @@
+# Printing
+
+File > Print (Ctrl+P) builds a print-ready PDF of the sheets and sends
+it to the printer chosen in the dialog, or opens it in the system
+viewer, where the printer is chosen (in the browser the PDF is
+downloaded; on Android it goes to the system's print service, whose
+dialog chooses the printer, the copies and the paper, #1398).
+`export::print` builds it; the sheets come from `imposition.rs`.
+
+## Printers
+
+The Printer list holds the system's printers in name order (ignoring
+case; the default stays where its name puts it), then "System printer
+(through the PDF viewer)", "PDF file" and "PostScript file". The list
+is read off the interface's thread when the dialog opens (on Android
+there is no list: the print service lists the printers, and the entry
+reads "System printer (through the Android print service)"), so a print
+server that is slow to answer never holds the window: until it comes,
+the list read last shows (or "Looking for printers..." the first
+time, when Print waits for the list if a printer is the destination),
+and the dialog takes the new list as soon as it is read, keeping a
+destination picked meanwhile unless it names a printer the system does
+not have (#614).
+The printers come from CUPS (Linux and macOS): `lpstat -l -p -d` lists
+them with their state, description and location (`printers.rs`,
+`parse_lpstat`), and a print on one of them hands the PDF to `lp -d`
+with the number of copies and their collation (`lp_args`) and the
+drawing's name as the job title; the status bar says "Sent to printer
+name", or what `lp` complained about. The dialog starts on the printer
+printed to last when the system still has it, else on the default
+printer, selected where it stands in the list, else on the PDF viewer
+(`starting_printer`); the printer is
+remembered with the other print choices (Options > Global > Printing).
+On Windows the printers are every printer Windows has, the ones
+installed on the computer and the network printers connected for the
+user alike: PowerShell lists `Win32_Printer` when the dialog opens
+(`WINDOWS_LIST`, `parse_windows_list`, #614) with each printer's
+PrinterStatus and WorkOffline (Ready, Printing, Warming up, Stopped,
+Offline, else Unknown), Location and Comment. A
+print on one of them draws each sheet at the printer's own resolution
+(its current setting, read through PowerShell before the sheets are
+drawn, `parse_windows_resolution`; the finest it offers when the setting
+is a named quality such as High; kept between 300 and 1200 dpi, 600
+when the printer does not say; `windows_print_dpi`), so fine lines and
+small text print as sharp as the PDF sent through `lp` on macOS and
+Linux (#1404; before, every Windows print was a 300 dpi picture). Each
+sheet goes as strips of at most 16 million pixels, every strip cut to
+its part that is not white and left out when it is all white
+(`sheet_tiles`), so a sheet never needs one huge picture in memory and
+blank paper adds nothing to the job. Each strip is drawn with rows of
+margin above and below, as far as shadow blurs reach (the whole sheet
+when it has a lens), and starts on a multiple of 16 rows
+(`render_page_rows`), so outlines leave no marks where strips meet. The strips are drawn pixel for
+pixel when the printer's resolution is the one they were drawn at, else
+smoothed, with their edges never blended with the paper, so strips meet
+with no seam. With General > Print as bitmap the sheets go at the
+resolution chosen there. The pictures reach the printer through
+PowerShell's printing classes (`windows_print_script`), so no PDF
+program is needed: each sheet takes
+the printer's paper of its size when the printer has one (either way
+round, within 2 mm), a wide sheet turns the paper, and the sheet is
+drawn at its size from the paper's corner; the copies and their
+collation go to the printer, the drawing's name is the job title. The
+script runs without a window and shows no "Printing page" box, and gives
+up after five minutes; what came of each print (the sheets sent, or the
+error) is written to `tracedraw.log`. A one-sheet print used to fail
+before it reached the printer, on every printer: the list of sheet sizes
+flattened in PowerShell when it held one sheet (#614; checked on a
+Windows machine with a printer writing to a file: one and two sheets
+come out). In the browser the list has no printers and the print goes
+through the PDF viewer.
+
+Next to the list a Properties button (a gear, available when a system
+printer is chosen) opens the printer's own settings: on Windows its
+printing preferences (`rundll32 printui.dll,PrintUIEntry /e /n name`),
+on macOS the system's Printers & Scanners settings, on Linux and other
+CUPS systems the printer's page of the CUPS web interface in the browser
+(`http://localhost:631/printers/name`, a web page, not a system dialog;
+`properties_command`). Under
+Orientation, Status, Location and Comment show what the system says of
+the printer chosen (empty for the PDF viewer and the files, #614).
+
+## Print dialog
+
+Tabs: General, Color, Composite, Layout, Prepress, PostScript and the
+preflight's Issues ("No Issues" or the count; hidden when Options >
+Global > Printing turns the preflight off). Under them Print Preview
+(hands the settings to the preview), Print, Cancel and Apply (keeps the
+settings as Options > Global > Printing's). The dialog starts with those
+preferences, and with the drawing's own bleed as the bleed limit when it
+has one.
+
+- General:
+  - Destination: Printer is one of the system's printers (above), the
+    system PDF viewer (which owns the printer and the copy count; in the
+    browser the PDF is downloaded), a PDF file or a PostScript file (saved
+    where chosen). Orientation: Match orientation (the Layout tab's
+    Landscape box), Portrait or Landscape, for fixed sheets.
+  - Sheet: the page's own size, the standard sizes, Smart Board 16:9
+    (1354.582 x 762 mm) and Custom (width and height typed; the last one
+    is kept). A Custom size saved with a name joins the list for the next
+    time (Options keeps them, #591).
+  - Print range: Current document, Current page, Pages (a list such as
+    `1-3, 5, 8-`; an empty or unusable list prints them all), Selection
+    (the selected objects of the current page, alone: no other object,
+    nothing of the master layers, no page background; the area they cover,
+    outlines and live effects included, becomes the page printed, so the
+    sheet sized to the page is that area, a fixed sheet gets it centred
+    at its size, shrunk only when it does not fit and Keep page size is off,
+    and the layouts repeat it; #1001, `selection_as_page`,
+    `export::tests::the_selection_prints_alone_on_a_page_of_its_size`,
+    `export::tests::keep_size_keeps_the_selection_at_its_size`); and Odd and even pages,
+    Odd pages or Even pages of the document or the list (#951).
+  - Copies: a file gets its copies inside, as whole sets (Collate) or
+    each sheet repeated. Reverse order (under Collate) prints the
+    sheets last first, for a stack that comes out face up or for the
+    backs of printed sheets; it reverses the sheets as imposed, so a
+    booklet or n-up layout keeps its sheets whole (#1394, #1571).
+  - Print as bitmap: each sheet becomes one picture at the resolution
+    given (36 to 1200 dpi).
+- Color: Composite, with Grayscale under it, or Separations (one grey
+  page per ink and sheet: C, M, Y, K, then the spot inks; black = full
+  ink). Grayscale (#1657) prints every colour of the sheets as its grey,
+  its luminance `0.299 R + 0.587 G + 0.114 B` as Bitmaps > Mode >
+  Grayscale gives it: fills, outlines, text, gradients, meshes, patterns,
+  live effects, shadows, lens colours and the marks (registration colour
+  stays), and every picture as its grey pixels (a CMYK picture's own
+  inks are left out of the print); the drawing keeps its colours. It is
+  greyed with Separations, which print from the colours. A lens that
+  makes colours of its own from what lies under it (heat map) still
+  does (`export::tests::grayscale_and_reverse_order_change_the_printed_sheets`).
+  Convert spot colors to
+  CMYK prints spot inks as their CMYK mix at their tint. The printed
+  sheets keep the drawing's list of spot inks, so each spot ink gets its
+  plate and its box in the print preview; before, the sheets lost the
+  list and only the four process plates printed (#779,
+  `export::tests::separations_print_a_plate_for_each_spot_ink`).
+  Pictures are split into their inks too (#1659): a picture that keeps
+  its ink channels (a CMYK image of a `.cdr` file) prints each ink as it
+  holds it, so cyan ink alone prints on the cyan plate alone and black
+  ink alone on the black plate; any other picture (RGB, greyscale, or
+  made CMYK by Convert Colors or Image > Mode, whose pixels changed) has
+  its pixels converted to CMYK with the drawing's colour management, the
+  conversion vector colours take: RGB red prints magenta and yellow, a
+  grey picture black ink alone (while neutral greys go to black). A spot
+  channel prints on its spot plate. Each pixel keeps its alpha on every
+  plate, so transparency, masks and clip frames print as they show.
+  Channels kept from a file belong to the pixels they came with: once
+  the pixels change (an effect, a mode, a resample) the pixels are
+  converted instead, and Convert Colors to RGB drops them. A picture is
+  split once per print job and its plates are cached, so Print Preview
+  redrawing a plate does not split it again
+  (`export::tests::separations_split_pictures_into_their_inks`). Before,
+  pictures printed whole on every plate.
+- Composite: Print text in black (fills, outlines and character colours
+  of every text); Always overprint black (100 % black fills and outlines
+  overprint).
+- Layout: As in document, Fit to page or Scale (percent). Fit to page
+  also brings objects that run off the page inside it: the objects the
+  page shows (every printed one when the range is the selection) shrink
+  as one to fit it, centred, when they do not fit; objects wholly off the
+  page stay out (#534, `fit_contents_to_page`,
+  `export::tests::fit_to_page_shrinks_what_runs_off_the_page`). Choosing
+  Fit to page (here, or ticking it in Print Preview) also puts back a
+  page moved or stretched on the sheet in Print Preview: the artwork
+  position goes to 0 and the stretch to 100 %, so the page comes back
+  fitted on the sheet (#1577,
+  `print_preview::tests::fit_to_page_brings_a_dragged_page_back`). Bleed limit
+  (how far beyond the page objects print, 4 mm by default); the
+  imposition, sheet, gap, the paper margins (left, right, top, bottom,
+  the same as Print Preview's; #909) and the sketch (below).
+- Prepress: Invert and Mirror (the whole sheet, marks included; Invert
+  prints a negative, the sheet's empty paper black too, so black ink
+  shows clear rather than white on white paper,
+  `export::tests::black_text_prints_black_and_a_negative_blackens_the_sheet`); Print
+  file information (with its text, the drawing's name when left empty)
+  and Print page numbers (each page's number under it); Crop/fold marks;
+  Registration marks; Color bars and Densitometer scale.
+- PostScript: with a PostScript file as the destination, the language
+  level written in its header (2 or 3).
+- Issues: what the preflight finds, and the way to its dialog.
+
+## Print Preview
+
+File > Print Preview, or Print Preview in the Print dialog (which hands
+over its settings), fills the window with the sheets exactly as Print
+sends them: the imposition, the marks, Mirror and Invert, built by the
+same function (`export::print_sheets`).
+
+- The printer's unprintable edge (#1924): with a printer chosen (not a
+  file), the strip along each side of the sheet that the printer cannot
+  print on, its hard margins as the system reports them, is shaded
+  grey; when the artwork of a page (what its frame on the sheet shows,
+  marks aside) reaches into it, a warning over the sheet says it will
+  be cut off (`print_preview::art_in_unprintable_edge`). The margins
+  are read once a printer, off the interface's thread (`printers.rs`,
+  `MarginsCache`): on Windows the printer's default paper and its
+  printable area (`PageSettings.PrintableArea`, hundredths of an inch,
+  the paper upright; `parse_windows_margins`), through CUPS (Linux,
+  macOS) the PPD's `*ImageableArea` inside its `*PaperDimension` for the
+  paper `lpoptions` says the printer is set to, else the PPD's default
+  (`parse_ppd_margins`); a queue with no PPD (driverless) or a printer
+  that does not say gets no shading. A sheet wider than tall takes the
+  margins turned a quarter counterclockwise: its top is the paper's
+  left edge (`HardMargins::for_sheet`). The browser and Android have
+  none.
+
+- Top bar: Print (prints these settings and closes), the sheet shown with previous and next (Page Up, Page Down), Zoom from 25 to 400 % of the fitted size
+  with Fit, the printer, and Close (Esc) at the right end (#534). The
+  bar wraps onto a second row when the window is too narrow for it.
+- The printer sits in the top bar after Fit, as in the Print dialog's
+  General tab (the system's printers in name order, the PDF viewer, PDF
+  and PostScript files; read off the interface's thread when the preview
+  opens, the list read last shown meanwhile), with the gear button that
+  opens the chosen printer's own Properties, its status, and the number
+  of copies with Collate; it was at the top of the left panel, which now
+  keeps that room for the options (#953). Print in the top bar prints
+  there (#792,
+  `print_preview::tests::the_preview_offers_the_printer_and_the_copies`).
+- Left: the Print dialog's options, two to a row (#951,
+  `print_preview::tests::the_options_stand_two_to_a_row`): All pages
+  beside Current page, Pages (a list such as `1-3, 5`) beside Selection
+  (with objects selected), Fit to page (or the scale) beside Odd and even
+  pages, Odd pages or Even pages (for all pages or the list; the current
+  page and the selection print as they are, and a choice that leaves no
+  page is let go; the Print dialog's Print range has the same choice,
+  `print_preview::tests::the_preview_prints_the_pages_chosen`); then
+  Prepress: Print separations, Bleed with its limit (the Print dialog's
+  Bleed limit, the same setting: 0 to 50 mm, greyed while Bleed is off,
+  #1653, `print_preview::tests::the_bleed_limit_is_set_beside_bleed`)
+  beside Crop marks, Registration
+  marks beside Color bars, Densitometer scale beside Page information,
+  Mirror beside Invert, Grayscale beside Reverse order (#1657, #1394),
+  Transform and Artwork position; then the layout
+  with its sketch. Every change rebuilds the sheets at once.
+  The panel is 360 points wide at first and its edge drags from 300 to
+  720. It is never narrower than its widest row as last laid out (a
+  longer language, Repeat's rows), up to half the window, so no label
+  is cut at its right; past half the window what does not fit scrolls
+  sideways, and the panel scrolls down when it is taller than the window
+  (#862, `print_preview::tests::the_options_panel_is_wider_and_its_edge_drags`,
+  `print_preview::tests::no_option_is_cut_off_in_any_language`).
+  While Print separations is on, a box for cyan, magenta, yellow, black
+  and each spot ink stands indented under it, all ticked at first
+  (#571; `print_preview::tests::the_ink_boxes_stand_under_print_separations`).
+  Every ink ticked shows the sheet as it is; one alone shows its plate
+  in grey; some show the colours those inks print together (process
+  colours keep the channels ticked, a spot colour shows when its ink is
+  ticked and is paper otherwise;
+  `print_preview::tests::plates_split_the_sheet_by_ink`). Pictures follow
+  the ticked inks pixel by pixel (#1659,
+  `print_preview::tests::plates_split_pictures_by_ink`).
+- A plate shows the ink's coverage in grey, black = full ink, as the
+  separations print; registration colour shows on every plate.
+- Paper margins (left, right, top, bottom, mm, 0 at first) keep the
+  paper's edges clear: the pages and their marks go in the middle of what
+  is left, shrinking to fit inside it unless Keep size is on; a sheet
+  fitted to the pages grows by them (`imposition::tests::pages_sit_inside_the_paper_margins`).
+  They are typed in the left panel (with the layout, as on the Print
+  dialog's Layout tab) or set by dragging their dashed blue
+  lines on the sheet (within 6 pixels; the pointer turns to a resize
+  arrow and the line under it is drawn bolder; a drag inwards makes the
+  margin larger, 0 to 200 mm; #580, #582).
+- A drag on the sheet moves the artwork on its page (the move cursor and
+  a tip say so), clear of the margins a printer leaves blank; Artwork
+  position on the left shows and takes the move in millimetres (x right,
+  y up) with Reset. Print prints it so: the imposition moves every page
+  of the sheet by it, its clip and marks with it (#536,
+  `export::tests::the_artwork_moved_in_print_preview_prints_moved`).
+- Transform (left panel, off at first) draws eight handles around the
+  artwork's cell: a side handle stretches it on that axis, a corner
+  handle scales it keeping its proportions (both axes by the factor of
+  the axis the pointer moved most; #1543,
+  `print_preview::tests::a_corner_handle_keeps_the_page_s_proportions`),
+  the opposite side or corner staying put and the resize cursor showing;
+  a drag inside moves it; the stretch shows as x and y percentages
+  there, typed or reset to 100 % (#595). The handles come before the
+  margin lines, which come before moving.
+- Stretch to fill (a fixed sheet): the pages stretch on each axis on
+  their own to fill the room inside the paper margins (#591,
+  `imposition::tests::pages_stretch_to_fill_and_follow_the_preview_transform`).
+  With the page information on, "Drag moves the page information" makes
+  a drag move that instead (#388).
+
+## Imposition
+
+- With facing pages each page prints with what its facing page holds
+  across the spine and in the bleed beside it (not for the selection
+  alone, nor with Fit to page; see `facing-pages.md`, #1972).
+- Pages keep their aspect ratio; each cell is as large as the largest
+  page on its sheet and a smaller page sits in its middle.
+- Gap between pages (several pages per sheet and repeat on the sheet,
+  0 to 50 mm, 5 mm at first): two fields, the gap across (between pages
+  side by side) and the gap down (between rows), each on its own
+  (#1795, `imposition::Options::gutter` and `gutter_y`,
+  `imposition::tests::the_column_and_row_gaps_are_set_apart`). Options >
+  Global > Printing starts every print with both; preferences saved
+  before the gap down existed take the gap across for it
+  (`prefs::tests::the_row_gap_is_remembered_and_old_preferences_take_the_column_gap`).
+  A booklet's spread keeps its own Gap (below).
+- Page order (several pages per sheet, #1658, `imposition::PageOrder`,
+  `imposition::tests::n_up_pages_can_run_down_the_columns`):
+  - Across, then down (default): left to right along each row, then the
+    next row; the next sheet goes on from the last page of this one.
+  - Down, then across: top to bottom down each column, then the next
+    column to the right; the next sheet goes on from the last page of
+    this one. 2 x 3: 1 2 3 down the first column, 4 5 6 down the
+    second, 7 on the next sheet.
+  - Down, through all sheets: top to bottom down each column, the
+    column going on in the same column of the next sheet, and only
+    after the last sheet does the next column start. Once the sheets are
+    stacked and cut into columns, each column is one series. 2 x 3 on
+    two sheets: 1 2 3 and 7 8 9 on the first sheet, 4 5 6 and 10 11 12
+    on the second. Cells past the last page stay empty.
+- Layout presets (#1796): the Preset row at the top of the layout fields
+  (Print dialog's Layout tab and Print Preview) lists the layouts saved
+  under a name; choosing one sets the imposition, columns and rows, page
+  order, sheet (by its name, or the Custom size) and orientation,
+  Stretch to fill, Keep page size, Back side, both gaps, the paper
+  margins, the booklet's binding, signature sheets, creep and gap, Bleed
+  with its limit and every printers' mark. "+" asks for a name and OK
+  (or Enter) keeps the layout under it, replacing a preset of that name;
+  "-" deletes the chosen preset after a Yes. A preset whose settings are
+  changed afterwards is shown unchosen. Presets are kept in the
+  preferences (`prefs::PrintPrefs::layout_presets`). Save to file...
+  writes the layout as a `.tdlayout` file (JSON: `format`
+  `"tracedraw-print-layout"`, `version` 1 and the `layout`, the fields
+  of `prefs::LayoutPreset`); Load from file... reads one (or a `.json`
+  file holding one) into the open Print Preview or Print dialog and keeps
+  it as a preset of its name. Another file is refused with a message;
+  values out of range are brought into range
+  (`prefs::tests::layout_presets_round_trip_through_a_file`,
+  `ui::dialogs::layout_preset_tests`). File access goes through the
+  app's file dialogs, so it works on the desktop, in the browser and on
+  Android.
+- A booklet's page count is rounded up to a multiple of four with blank
+  pages at the back. The Layout fields (Print dialog and Print Preview)
+  choose its binding by two pictures (#788, #947,
+  `imposition::Booklet`):
+  - Saddle stitch (default): every sheet folds inside the one before.
+    The sheet sides pair the pages: for eight pages 8 and 1, 2 and 7, 6
+    and 3, 4 and 5 (left and right).
+  - Perfect bound: the sheets go in signatures of Sheets per signature
+    (default 4, 1 to 32), each folded on its own as a small saddle
+    stitch; the last signature takes the sheets left. One sheet per
+    signature: 4 1, 2 3, 8 5, 6 7 (`imposition::booklet_sides`).
+  - Creep (saddle stitch only, default 0, 0 to 20 mm): the pages of the
+    sheet at depth d of n (0 the outer sheet) move toward the spine by
+    creep x d / (n - 1), the left page right and the right page left;
+    the outer sheet stays, the innermost moves by the creep. The page
+    and its trim box move together, so crop marks follow.
+  - Gap (default 0, 0 to 100 mm): the space between the two pages of a
+    spread, centred on the fold; a fitted sheet grows by it. No bleed is
+    kept between the two pages.
+  - Under the sketch: the pages, the blank pages added and the sheets of
+    paper (each printed on both sides), and for perfect binding the
+    signatures (`imposition::booklet_info`). The page range (Pages) picks
+    the pages that go into the booklet, and the sketch, its sheet count
+    and the summary count those pages only (the range, the list, odd or
+    even pages, the selection: `export::printed_pages`, the page set the
+    print imposes, through `ui::dialogs::printed_page_sizes`), not the
+    whole drawing: pages 1 to 20 of a hundred report 20 pages, 0 blanks
+    and 5 sheets (#788,
+    `ui::dialogs::booklet_fields_tests::the_summary_counts_the_pages_of_the_range`).
+- Back side (n-up and step and repeat, #387): the columns run right to
+  left, so a page's place on the sheet mirrors its place on the front
+  about the sheet's middle and it prints behind its front on a
+  double-sided sheet; the pages are not mirrored (unlike Mirror)
+  (`imposition::tests::the_back_side_runs_the_columns_right_to_left`).
+- Keep page size (a fixed sheet, #388): the pages are never scaled, not
+  to make room for the marks (which take the room there is) nor to fit
+  the grid: Several Pages per Sheet and Repeat Copies keep the columns
+  and rows as set, and pages that do not fit run off the sheet; the
+  sketch shows the sheet's part and a warning says what runs off is not
+  printed (#496, `imposition::overflows`,
+  `imposition::tests::kept_size_keeps_the_grid_and_the_page_size`).
+  Without it the grid shrinks to fit inside the marks. Columns and rows go
+  up to 99. The page information can be moved:
+  with it on, a drag on the sheet in Print Preview moves it (an offset in
+  mm, "Page information back in place" resets it)
+  (`imposition::tests::kept_size_does_not_shrink_pages_for_marks`).
+- Every page is clipped to its trim box plus the bleed, so nothing spills
+  onto its neighbours or the margin. Hidden and non-printing layers are
+  left out; master layers print with every page they show on; a page
+  background prints under its page.
+
+## Marks
+
+With any mark on, a 12 mm margin (plus the bleed) surrounds the pages.
+
+- Crop marks: 5 mm lines in registration colour, 0.1 mm wide, starting
+  1.5 mm beyond the bleed, at every cut line of the grid, outside the
+  pages only. A booklet also gets a dashed fold mark at the spine, half way
+  between its two pages.
+- Registration marks: a target (circle and cross) centred on each side
+  of the pages.
+- Color bars: patches of 4 mm of cyan, magenta, yellow, black, red,
+  green, blue (two-ink overprints) and 50 % tints of the four inks, left
+  of the top target.
+- Densitometer scale: black from 0 to 100 % in steps of ten, right of the
+  top target.
+- Page numbers: each page's number, 6 pt, under the page.
+- Page information: the drawing's name (or the text given), the pages on the sheet, "sheet n
+  of n" and the date and time, in 6 pt under the pages.
+
+## Checks
+
+- `printers::tests::the_printer_list_is_read_from_lpstat`, `printers::tests::the_dialog_starts_on_the_remembered_printer_else_the_default`, `printers::tests::lp_is_told_the_printer_copies_and_title`
+- `printers::tests::the_windows_printer_list_holds_network_printers`, `printers::tests::the_windows_print_script_names_the_printer_copies_and_sheets`
+- `printers::tests::windows_tiles_go_pixel_for_pixel_at_the_printers_resolution`, `printers::tests::the_windows_printer_resolution_is_read`, `export::tests::printed_sheet_strips_put_together_are_the_whole_sheet`, `export::tests::windows_prints_at_the_printers_resolution`
+- `printers::tests::properties_open_the_printers_own_settings`, `pick_drag_tests::the_print_dialog_reads_the_printers_off_the_interface_thread`, `pick_drag_tests::a_destination_picked_while_the_printers_are_read_stays`
+- `export::tests::page_lists_and_ranges_pick_pages`
+- `export::tests::print_colour_options_change_the_sheets_objects`
+- `export::tests::copies_repeat_sheets_collated_or_not_and_ps_gets_its_level`
+
+- `ui::print_preview::tests::plates_split_the_sheet_by_ink`
+- `ui::print_preview::tests::plates_split_pictures_by_ink`
+- `export::tests::separations_split_pictures_into_their_inks`
+- `ui::print_preview::tests::the_settings_key_ignores_copies_and_preflight`
+- `ui::print_preview::tests::the_bleed_limit_is_set_beside_bleed`
+
+- `imposition::tests::booklets_pair_the_pages_for_folding`
+- `imposition::tests::perfect_binding_folds_each_signature_on_its_own`
+- `imposition::tests::booklet_gap_and_creep_move_the_pages`
+- `ui::dialogs::booklet_fields_tests::the_binding_pictures_choose_and_the_summary_counts`
+- `ui::dialogs::booklet_fields_tests::the_summary_counts_the_pages_of_the_range`
+- `imposition::tests::n_up_fills_sheets_in_reading_order_and_scales_to_fit`
+- `imposition::tests::fitted_sheets_grow_with_marks_bleed_and_gutters`
+- `imposition::tests::imposing_places_and_clips_every_page`
+- `export::tests::the_print_dialog_settings_make_the_layout`
+- `export::tests::colours_are_mapped_inside_groups_frames_and_text`: the
+  separations and Invert reach into groups, clip frames and character
+  fills.

@@ -1,0 +1,142 @@
+# Fonts in the browser build's font folder (site/fonts). The page fetches a
+# family's files the first time a drawing's text needs it: text set in the
+# family, in a family it stands in for (see `substitutes` in
+# crates/text/src/lib.rs), or letters of a script only it has. Built by
+# web/font_folder.py; see FONTS.md for the licences.
+#
+# Each line: family | source | files
+#   gf          paths in the google/fonts repository at the commit below;
+#               the folder's licence file comes along
+#   deb:<pkg>   file names searched under /usr/share/fonts and
+#               /usr/share/texmf once the package is installed; its
+#               copyright file comes along
+# "licence | deb:<pkg>" copies a package's copyright file only (the fonts
+# build.rs bundles into the module).
+
+commit bd8f81ddb5c74d5c8897b36ad88b440266245103
+
+licence | deb:fonts-liberation
+licence | deb:fonts-dejavu-core
+licence | deb:fonts-noto-core
+
+# Drawn to the widths of common office and PostScript faces.
+Carlito | gf | ofl/carlito/Carlito-Regular.ttf ofl/carlito/Carlito-Bold.ttf ofl/carlito/Carlito-Italic.ttf ofl/carlito/Carlito-BoldItalic.ttf
+Caladea | gf | ofl/caladea/Caladea-Regular.ttf ofl/caladea/Caladea-Bold.ttf ofl/caladea/Caladea-Italic.ttf ofl/caladea/Caladea-BoldItalic.ttf
+Gelasio | gf | ofl/gelasio/Gelasio[wght].ttf ofl/gelasio/Gelasio-Italic[wght].ttf
+TeX Gyre Pagella | deb:fonts-texgyre | texgyrepagella-regular.otf texgyrepagella-bold.otf texgyrepagella-italic.otf texgyrepagella-bolditalic.otf
+TeX Gyre Bonum | deb:fonts-texgyre | texgyrebonum-regular.otf texgyrebonum-bold.otf texgyrebonum-italic.otf texgyrebonum-bolditalic.otf
+TeX Gyre Schola | deb:fonts-texgyre | texgyreschola-regular.otf texgyreschola-bold.otf texgyreschola-italic.otf texgyreschola-bolditalic.otf
+TeX Gyre Adventor | deb:fonts-texgyre | texgyreadventor-regular.otf texgyreadventor-bold.otf texgyreadventor-italic.otf texgyreadventor-bolditalic.otf
+TeX Gyre Chorus | deb:fonts-texgyre | texgyrechorus-mediumitalic.otf
+TeX Gyre Heros Cn | deb:fonts-texgyre | texgyreheroscn-regular.otf texgyreheroscn-bold.otf texgyreheroscn-italic.otf texgyreheroscn-bolditalic.otf
+DejaVu Serif | deb:fonts-dejavu-core | DejaVuSerif.ttf DejaVuSerif-Bold.ttf DejaVuSerif-Italic.ttf DejaVuSerif-BoldItalic.ttf
+DejaVu Sans Mono | deb:fonts-dejavu-core | DejaVuSansMono.ttf DejaVuSansMono-Bold.ttf DejaVuSansMono-Oblique.ttf DejaVuSansMono-BoldOblique.ttf
+Comic Neue | gf | ofl/comicneue/ComicNeue-Regular.ttf ofl/comicneue/ComicNeue-Bold.ttf ofl/comicneue/ComicNeue-Italic.ttf ofl/comicneue/ComicNeue-BoldItalic.ttf
+EB Garamond | gf | ofl/ebgaramond/EBGaramond[wght].ttf ofl/ebgaramond/EBGaramond-Italic[wght].ttf
+
+# Sans-serif.
+Open Sans | gf | ofl/opensans/OpenSans[wdth,wght].ttf ofl/opensans/OpenSans-Italic[wdth,wght].ttf
+Roboto | gf | ofl/roboto/Roboto[wdth,wght].ttf ofl/roboto/Roboto-Italic[wdth,wght].ttf
+Montserrat | gf | ofl/montserrat/Montserrat[wght].ttf ofl/montserrat/Montserrat-Italic[wght].ttf
+Lato | gf | ofl/lato/Lato-Regular.ttf ofl/lato/Lato-Bold.ttf ofl/lato/Lato-Italic.ttf ofl/lato/Lato-BoldItalic.ttf
+Poppins | gf | ofl/poppins/Poppins-Regular.ttf ofl/poppins/Poppins-Bold.ttf ofl/poppins/Poppins-Italic.ttf ofl/poppins/Poppins-BoldItalic.ttf
+Inter | gf | ofl/inter/Inter[opsz,wght].ttf ofl/inter/Inter-Italic[opsz,wght].ttf
+Noto Sans | gf | ofl/notosans/NotoSans[wdth,wght].ttf ofl/notosans/NotoSans-Italic[wdth,wght].ttf
+Raleway | gf | ofl/raleway/Raleway[wght].ttf ofl/raleway/Raleway-Italic[wght].ttf
+Oswald | gf | ofl/oswald/Oswald[wght].ttf
+Source Sans 3 | gf | ofl/sourcesans3/SourceSans3[wght].ttf ofl/sourcesans3/SourceSans3-Italic[wght].ttf
+Nunito | gf | ofl/nunito/Nunito[wght].ttf ofl/nunito/Nunito-Italic[wght].ttf
+PT Sans | gf | ofl/ptsans/PT_Sans-Web-Regular.ttf ofl/ptsans/PT_Sans-Web-Bold.ttf ofl/ptsans/PT_Sans-Web-Italic.ttf ofl/ptsans/PT_Sans-Web-BoldItalic.ttf
+Ubuntu | gf | ufl/ubuntu/Ubuntu-Regular.ttf ufl/ubuntu/Ubuntu-Bold.ttf ufl/ubuntu/Ubuntu-Italic.ttf ufl/ubuntu/Ubuntu-BoldItalic.ttf
+Work Sans | gf | ofl/worksans/WorkSans[wght].ttf ofl/worksans/WorkSans-Italic[wght].ttf
+Fira Sans | gf | ofl/firasans/FiraSans-Regular.ttf ofl/firasans/FiraSans-Bold.ttf ofl/firasans/FiraSans-Italic.ttf ofl/firasans/FiraSans-BoldItalic.ttf
+Rubik | gf | ofl/rubik/Rubik[wght].ttf ofl/rubik/Rubik-Italic[wght].ttf
+Roboto Condensed | gf | ofl/robotocondensed/RobotoCondensed[wght].ttf ofl/robotocondensed/RobotoCondensed-Italic[wght].ttf
+Barlow | gf | ofl/barlow/Barlow-Regular.ttf ofl/barlow/Barlow-Bold.ttf ofl/barlow/Barlow-Italic.ttf ofl/barlow/Barlow-BoldItalic.ttf
+Titillium Web | gf | ofl/titilliumweb/TitilliumWeb-Regular.ttf ofl/titilliumweb/TitilliumWeb-Bold.ttf ofl/titilliumweb/TitilliumWeb-Italic.ttf ofl/titilliumweb/TitilliumWeb-BoldItalic.ttf
+Quicksand | gf | ofl/quicksand/Quicksand[wght].ttf
+Josefin Sans | gf | ofl/josefinsans/JosefinSans[wght].ttf ofl/josefinsans/JosefinSans-Italic[wght].ttf
+Mulish | gf | ofl/mulish/Mulish[wght].ttf ofl/mulish/Mulish-Italic[wght].ttf
+Karla | gf | ofl/karla/Karla[wght].ttf ofl/karla/Karla-Italic[wght].ttf
+Manrope | gf | ofl/manrope/Manrope[wght].ttf
+DM Sans | gf | ofl/dmsans/DMSans[opsz,wght].ttf ofl/dmsans/DMSans-Italic[opsz,wght].ttf
+Cabin | gf | ofl/cabin/Cabin[wdth,wght].ttf ofl/cabin/Cabin-Italic[wdth,wght].ttf
+Hind | gf | ofl/hind/Hind-Regular.ttf ofl/hind/Hind-Bold.ttf
+Exo 2 | gf | ofl/exo2/Exo2[wght].ttf ofl/exo2/Exo2-Italic[wght].ttf
+Libre Franklin | gf | ofl/librefranklin/LibreFranklin[wght].ttf ofl/librefranklin/LibreFranklin-Italic[wght].ttf
+Archivo | gf | ofl/archivo/Archivo[wdth,wght].ttf ofl/archivo/Archivo-Italic[wdth,wght].ttf
+
+# Serif.
+Noto Serif | gf | ofl/notoserif/NotoSerif[wdth,wght].ttf ofl/notoserif/NotoSerif-Italic[wdth,wght].ttf
+Merriweather | gf | ofl/merriweather/Merriweather[opsz,wdth,wght].ttf ofl/merriweather/Merriweather-Italic[opsz,wdth,wght].ttf
+Playfair Display | gf | ofl/playfairdisplay/PlayfairDisplay[wght].ttf ofl/playfairdisplay/PlayfairDisplay-Italic[wght].ttf
+PT Serif | gf | ofl/ptserif/PT_Serif-Web-Regular.ttf ofl/ptserif/PT_Serif-Web-Bold.ttf ofl/ptserif/PT_Serif-Web-Italic.ttf ofl/ptserif/PT_Serif-Web-BoldItalic.ttf
+Lora | gf | ofl/lora/Lora[wght].ttf ofl/lora/Lora-Italic[wght].ttf
+Libre Baskerville | gf | ofl/librebaskerville/LibreBaskerville[wght].ttf ofl/librebaskerville/LibreBaskerville-Italic[wght].ttf
+Cormorant Garamond | gf | ofl/cormorantgaramond/CormorantGaramond[wght].ttf ofl/cormorantgaramond/CormorantGaramond-Italic[wght].ttf
+Crimson Text | gf | ofl/crimsontext/CrimsonText-Regular.ttf ofl/crimsontext/CrimsonText-Bold.ttf ofl/crimsontext/CrimsonText-Italic.ttf ofl/crimsontext/CrimsonText-BoldItalic.ttf
+Source Serif 4 | gf | ofl/sourceserif4/SourceSerif4[opsz,wght].ttf ofl/sourceserif4/SourceSerif4-Italic[opsz,wght].ttf
+Roboto Slab | gf | apache/robotoslab/RobotoSlab[wght].ttf
+Arvo | gf | ofl/arvo/Arvo-Regular.ttf ofl/arvo/Arvo-Bold.ttf ofl/arvo/Arvo-Italic.ttf ofl/arvo/Arvo-BoldItalic.ttf
+Zilla Slab | gf | ofl/zillaslab/ZillaSlab-Regular.ttf ofl/zillaslab/ZillaSlab-Bold.ttf ofl/zillaslab/ZillaSlab-Italic.ttf ofl/zillaslab/ZillaSlab-BoldItalic.ttf
+Bitter | gf | ofl/bitter/Bitter[wght].ttf ofl/bitter/Bitter-Italic[wght].ttf
+Vollkorn | gf | ofl/vollkorn/Vollkorn[wght].ttf ofl/vollkorn/Vollkorn-Italic[wght].ttf
+Alegreya | gf | ofl/alegreya/Alegreya[wght].ttf ofl/alegreya/Alegreya-Italic[wght].ttf
+Spectral | gf | ofl/spectral/Spectral-Regular.ttf ofl/spectral/Spectral-Bold.ttf ofl/spectral/Spectral-Italic.ttf ofl/spectral/Spectral-BoldItalic.ttf
+Old Standard TT | gf | ofl/oldstandardtt/OldStandard-Regular.ttf ofl/oldstandardtt/OldStandard-Bold.ttf ofl/oldstandardtt/OldStandard-Italic.ttf
+Cardo | gf | ofl/cardo/Cardo-Regular.ttf ofl/cardo/Cardo-Bold.ttf ofl/cardo/Cardo-Italic.ttf
+Cinzel | gf | ofl/cinzel/Cinzel[wght].ttf
+
+# Display.
+Bebas Neue | gf | ofl/bebasneue/BebasNeue-Regular.ttf
+Anton | gf | ofl/anton/Anton-Regular.ttf
+Abril Fatface | gf | ofl/abrilfatface/AbrilFatface-Regular.ttf
+Alfa Slab One | gf | ofl/alfaslabone/AlfaSlabOne-Regular.ttf
+Righteous | gf | ofl/righteous/Righteous-Regular.ttf
+Fjalla One | gf | ofl/fjallaone/FjallaOne-Regular.ttf
+Lobster | gf | ofl/lobster/Lobster-Regular.ttf
+Bangers | gf | ofl/bangers/Bangers-Regular.ttf
+Teko | gf | ofl/teko/Teko[wght].ttf
+Fredoka | gf | ofl/fredoka/Fredoka[wdth,wght].ttf
+Comfortaa | gf | ofl/comfortaa/Comfortaa[wght].ttf
+Baloo 2 | gf | ofl/baloo2/Baloo2[wght].ttf
+
+# Script and handwriting.
+Pacifico | gf | ofl/pacifico/Pacifico-Regular.ttf
+Dancing Script | gf | ofl/dancingscript/DancingScript[wght].ttf
+Great Vibes | gf | ofl/greatvibes/GreatVibes-Regular.ttf
+Kaushan Script | gf | ofl/kaushanscript/KaushanScript-Regular.ttf
+Sacramento | gf | ofl/sacramento/Sacramento-Regular.ttf
+Allura | gf | ofl/allura/Allura-Regular.ttf
+Parisienne | gf | ofl/parisienne/Parisienne-Regular.ttf
+Tangerine | gf | ofl/tangerine/Tangerine-Regular.ttf ofl/tangerine/Tangerine-Bold.ttf
+Pinyon Script | gf | ofl/pinyonscript/PinyonScript-Regular.ttf
+Alex Brush | gf | ofl/alexbrush/AlexBrush-Regular.ttf
+Marck Script | gf | ofl/marckscript/MarckScript-Regular.ttf
+Caveat | gf | ofl/caveat/Caveat[wght].ttf
+Indie Flower | gf | ofl/indieflower/IndieFlower-Regular.ttf
+Shadows Into Light | gf | ofl/shadowsintolight/ShadowsIntoLight.ttf
+Amatic SC | gf | ofl/amaticsc/AmaticSC-Regular.ttf ofl/amaticsc/AmaticSC-Bold.ttf
+Gloria Hallelujah | gf | ofl/gloriahallelujah/GloriaHallelujah.ttf
+Architects Daughter | gf | ofl/architectsdaughter/ArchitectsDaughter-Regular.ttf
+Patrick Hand | gf | ofl/patrickhand/PatrickHand-Regular.ttf
+Handlee | gf | ofl/handlee/Handlee-Regular.ttf
+Kalam | gf | ofl/kalam/Kalam-Regular.ttf ofl/kalam/Kalam-Bold.ttf
+
+# Monospaced.
+Roboto Mono | gf | ofl/robotomono/RobotoMono[wght].ttf ofl/robotomono/RobotoMono-Italic[wght].ttf
+Source Code Pro | gf | ofl/sourcecodepro/SourceCodePro[wght].ttf ofl/sourcecodepro/SourceCodePro-Italic[wght].ttf
+JetBrains Mono | gf | ofl/jetbrainsmono/JetBrainsMono[wght].ttf ofl/jetbrainsmono/JetBrainsMono-Italic[wght].ttf
+Fira Code | gf | ofl/firacode/FiraCode[wght].ttf
+Ubuntu Mono | gf | ufl/ubuntumono/UbuntuMono-Regular.ttf ufl/ubuntumono/UbuntuMono-Bold.ttf ufl/ubuntumono/UbuntuMono-Italic.ttf ufl/ubuntumono/UbuntuMono-BoldItalic.ttf
+Courier Prime | gf | ofl/courierprime/CourierPrime-Regular.ttf ofl/courierprime/CourierPrime-Bold.ttf ofl/courierprime/CourierPrime-Italic.ttf ofl/courierprime/CourierPrime-BoldItalic.ttf
+Noto Sans Mono | gf | ofl/notosansmono/NotoSansMono[wdth,wght].ttf
+
+# Other scripts: asked for when text holds letters the other fonts lack.
+Noto Sans Arabic | gf | ofl/notosansarabic/NotoSansArabic[wdth,wght].ttf
+Noto Sans Hebrew | gf | ofl/notosanshebrew/NotoSansHebrew[wdth,wght].ttf
+Noto Sans Thai | gf | ofl/notosansthai/NotoSansThai[wdth,wght].ttf
+Noto Sans SC | gf | ofl/notosanssc/NotoSansSC[wght].ttf
+Noto Sans TC | gf | ofl/notosanstc/NotoSansTC[wght].ttf
+Noto Sans JP | gf | ofl/notosansjp/NotoSansJP[wght].ttf
+Noto Sans KR | gf | ofl/notosanskr/NotoSansKR[wght].ttf

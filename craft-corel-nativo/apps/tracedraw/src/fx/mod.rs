@@ -1,0 +1,1333 @@
+//! The bitmap effects of the Effects menu, grouped
+//! groups them, each with its own settings. A bitmap keeps its effects
+//! apart from its pixels (the Properties docker's FX tab lists them): the
+//! effects can be edited, hidden, reordered or removed, and the bitmap
+//! shows their result. Effects that spread past the edges grow the
+//! bitmap first when Auto inflate is on.
+
+pub mod adjust;
+pub mod art;
+pub mod blur;
+pub mod camera;
+pub mod color;
+pub mod creative;
+pub mod distort;
+pub mod noise;
+pub mod preview;
+pub mod texture;
+pub mod util;
+
+use image::RgbaImage;
+use std::collections::BTreeMap;
+use tracedraw_core::{BitmapEffect, BitmapFxStack};
+
+/// What kind of control a setting has.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum ParamKind {
+    /// A slider from `min` to `max`; `step` 1 makes it whole numbers.
+    Range {
+        min: f64,
+        max: f64,
+        default: f64,
+        step: f64,
+    },
+    /// A direction, degrees counter-clockwise from the right.
+    Angle {
+        default: f64,
+    },
+    /// One of several choices (their i18n keys are `fxo.<option>`).
+    Choice {
+        options: &'static [&'static str],
+        default: usize,
+    },
+    Check {
+        default: bool,
+    },
+    /// 0xRRGGBB.
+    Color {
+        default: u32,
+    },
+}
+
+/// One setting: its stored name (and i18n key `fxp.<name>`) and control.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ParamSpec {
+    pub name: &'static str,
+    pub kind: ParamKind,
+}
+
+pub const fn range(name: &'static str, min: f64, max: f64, default: f64, step: f64) -> ParamSpec {
+    ParamSpec {
+        name,
+        kind: ParamKind::Range {
+            min,
+            max,
+            default,
+            step,
+        },
+    }
+}
+
+pub const fn angle(name: &'static str, default: f64) -> ParamSpec {
+    ParamSpec {
+        name,
+        kind: ParamKind::Angle { default },
+    }
+}
+
+pub const fn choice(
+    name: &'static str,
+    options: &'static [&'static str],
+    default: usize,
+) -> ParamSpec {
+    ParamSpec {
+        name,
+        kind: ParamKind::Choice { options, default },
+    }
+}
+
+pub const fn check(name: &'static str, default: bool) -> ParamSpec {
+    ParamSpec {
+        name,
+        kind: ParamKind::Check { default },
+    }
+}
+
+pub const fn color(name: &'static str, default: u32) -> ParamSpec {
+    ParamSpec {
+        name,
+        kind: ParamKind::Color { default },
+    }
+}
+
+/// An effect: its stable id (and i18n key `fx.<id>`), its settings, what
+/// it does and how far past the edges it reaches (pixels) with them.
+pub struct EffectSpec {
+    pub id: &'static str,
+    pub params: &'static [ParamSpec],
+    pub apply: fn(&RgbaImage, &P) -> RgbaImage,
+    pub reach: fn(&P, u32, u32) -> u32,
+}
+
+/// Effects that stay inside the image.
+pub fn no_reach(_: &P, _: u32, _: u32) -> u32 {
+    0
+}
+
+/// An effect's settings, falling back to its defaults and kept in range.
+pub struct P<'a> {
+    pub spec: &'a EffectSpec,
+    pub values: &'a BTreeMap<String, f64>,
+}
+
+impl P<'_> {
+    fn param(&self, name: &str) -> Option<&ParamSpec> {
+        self.spec.params.iter().find(|p| p.name == name)
+    }
+
+    /// A number setting (sliders, angles, check boxes as 0 or 1).
+    pub fn f(&self, name: &str) -> f64 {
+        let Some(p) = self.param(name) else {
+            return 0.0;
+        };
+        let v = self.values.get(name).copied().filter(|v| v.is_finite());
+        match p.kind {
+            ParamKind::Range {
+                min,
+                max,
+                default,
+                step,
+            } => {
+                let v = v.unwrap_or(default).clamp(min.min(max), max.max(min));
+                if step >= 1.0 {
+                    v.round()
+                } else {
+                    v
+                }
+            }
+            ParamKind::Angle { default } => v.unwrap_or(default),
+            ParamKind::Choice { options, default } => {
+                (v.map(|v| v.round().max(0.0) as usize).unwrap_or(default))
+                    .min(options.len().saturating_sub(1)) as f64
+            }
+            ParamKind::Check { default } => {
+                if v.map(|v| v != 0.0).unwrap_or(default) {
+                    1.0
+                } else {
+                    0.0
+                }
+            }
+            ParamKind::Color { default } => {
+                v.unwrap_or(default as f64).clamp(0.0, 16_777_215.0).round()
+            }
+        }
+    }
+
+    pub fn f32(&self, name: &str) -> f32 {
+        self.f(name) as f32
+    }
+
+    pub fn u(&self, name: &str) -> u32 {
+        self.f(name).max(0.0).round() as u32
+    }
+
+    /// A choice's index.
+    pub fn i(&self, name: &str) -> usize {
+        self.f(name) as usize
+    }
+
+    pub fn b(&self, name: &str) -> bool {
+        self.f(name) != 0.0
+    }
+
+    pub fn rgb(&self, name: &str) -> [u8; 3] {
+        util::rgb(self.f(name) as u32)
+    }
+}
+
+/// Every effect, in menu order within its group.
+pub fn catalog() -> impl Iterator<Item = &'static EffectSpec> {
+    adjust::EFFECTS
+        .iter()
+        .chain(adjust::TRANSFORM.iter())
+        .chain(adjust::CORRECTION.iter())
+        .chain(texture::THREE_D.iter())
+        .chain(art::EFFECTS.iter())
+        .chain(blur::EFFECTS.iter())
+        .chain(camera::EFFECTS.iter())
+        .chain(color::TRANSFORM.iter())
+        .chain(color::CONTOUR.iter())
+        .chain(creative::EFFECTS.iter())
+        .chain(texture::CUSTOM.iter())
+        .chain(distort::EFFECTS.iter())
+        .chain(noise::NOISE.iter())
+        .chain(noise::SHARPEN.iter())
+        .chain(texture::TEXTURE.iter())
+}
+
+/// The Effects menu's bitmap groups: (i18n key, effects).
+pub fn groups() -> Vec<(&'static str, &'static [EffectSpec])> {
+    vec![
+        // In alphabetical order of their English names.
+        ("menu.effects.3d", texture::THREE_D),
+        ("menu.effects.adjust", adjust::EFFECTS),
+        ("menu.effects.art_strokes", art::EFFECTS),
+        ("menu.effects.blur", blur::EFFECTS),
+        ("menu.effects.camera", camera::EFFECTS),
+        ("menu.effects.color_transform", color::TRANSFORM),
+        ("menu.effects.contour_group", color::CONTOUR),
+        ("menu.effects.correction", adjust::CORRECTION),
+        ("menu.effects.creative", creative::EFFECTS),
+        ("menu.effects.custom", texture::CUSTOM),
+        ("menu.effects.distort", distort::EFFECTS),
+        ("menu.effects.noise", noise::NOISE),
+        ("menu.effects.sharpen", noise::SHARPEN),
+        ("menu.effects.texture", texture::TEXTURE),
+        ("menu.effects.transform", adjust::TRANSFORM),
+    ]
+}
+
+pub fn spec(id: &str) -> Option<&'static EffectSpec> {
+    catalog().find(|s| s.id == id)
+}
+
+/// A new effect with its default settings.
+pub fn new_effect(id: &str) -> BitmapEffect {
+    BitmapEffect {
+        id: id.to_string(),
+        params: BTreeMap::new(),
+        visible: true,
+    }
+}
+
+/// The Bitmap Effects lens: run the visible effects over straight RGBA
+/// pixels in place (registered with the renderer at start-up).
+pub fn lens_effects(effects: &[BitmapEffect], width: u32, height: u32, rgba: &mut Vec<u8>) {
+    let Some(mut img) = RgbaImage::from_raw(width, height, std::mem::take(rgba)) else {
+        return;
+    };
+    for e in effects.iter().filter(|e| e.visible) {
+        img = apply_effect(&img, e);
+    }
+    *rgba = img.into_raw();
+}
+
+/// Run one effect (unknown ones leave the image as it is).
+pub fn apply_effect(img: &RgbaImage, e: &BitmapEffect) -> RgbaImage {
+    match spec(&e.id) {
+        Some(s) => {
+            let p = P {
+                spec: s,
+                values: &e.params,
+            };
+            let out = (s.apply)(img, &p);
+            if out.dimensions() == img.dimensions() {
+                out
+            } else {
+                img.clone()
+            }
+        }
+        None => img.clone(),
+    }
+}
+
+/// Settings measured in pixels: a copy of the bitmap at another scale
+/// (a preview) runs them scaled so it looks like the result.
+const PIXEL_PARAMS: [&str; 16] = [
+    "radius",
+    "distance",
+    "size",
+    "width",
+    "height",
+    "blade_size",
+    "stroke_size",
+    "brush_size",
+    "max_dot_radius",
+    "period",
+    "amplitude",
+    "spacing",
+    "smear_length",
+    "solder_width",
+    "depth",
+    "strength",
+];
+
+/// The effect as a copy at `scale` runs it: pixel sizes scaled, never
+/// below their minimum.
+pub fn scaled(e: &BitmapEffect, scale: f32) -> BitmapEffect {
+    let Some(spec) = spec(&e.id) else {
+        return e.clone();
+    };
+    let mut out = e.clone();
+    for p in spec.params {
+        if let ParamKind::Range { min, default, .. } = p.kind {
+            if PIXEL_PARAMS.contains(&p.name) {
+                let v = e.params.get(p.name).copied().unwrap_or(default);
+                out.params
+                    .insert(p.name.to_string(), (v * scale as f64).max(min));
+            }
+        }
+    }
+    out
+}
+
+/// How far an effect reaches past the image's edges, pixels.
+pub fn reach(e: &BitmapEffect, w: u32, h: u32) -> u32 {
+    match spec(&e.id) {
+        Some(s) => {
+            let p = P {
+                spec: s,
+                values: &e.params,
+            };
+            (s.reach)(&p, w, h).min(w.max(h))
+        }
+        None => 0,
+    }
+}
+
+/// The result of a bitmap's effects: the image and its place. With
+/// `inflate` the original grows by what the visible effects reach first.
+/// With `cancel` raised it stops before the next effect and gives
+/// `None`, so a dropped live preview ends soon.
+pub fn render_stack(
+    stack: &BitmapFxStack,
+    inflate: bool,
+    cancel: Option<&std::sync::atomic::AtomicBool>,
+) -> Option<(RgbaImage, tracedraw_core::Rect)> {
+    let cancelled = || cancel.is_some_and(|c| c.load(std::sync::atomic::Ordering::Relaxed));
+    let mut img = crate::bitmap_fx::decode(&stack.png)?;
+    let (w, h) = img.dimensions();
+    let pad: u32 = if inflate {
+        stack
+            .effects
+            .iter()
+            .filter(|e| e.visible)
+            .map(|e| reach(e, w, h))
+            .sum::<u32>()
+            .min(w.max(h))
+    } else {
+        0
+    };
+    let mut rect = stack.rect;
+    if pad > 0 {
+        img = crate::bitmap_fx::inflate(&img, pad);
+        let mx = stack.rect.width() / w.max(1) as f64 * pad as f64;
+        let my = stack.rect.height() / h.max(1) as f64 * pad as f64;
+        rect = tracedraw_core::Rect::new(rect.x0 - mx, rect.y0 - my, rect.x1 + mx, rect.y1 + my);
+    }
+    for e in stack.effects.iter().filter(|e| e.visible) {
+        if cancelled() {
+            return None;
+        }
+        img = apply_effect(&img, e);
+    }
+    Some((img, rect))
+}
+
+/// Resolution of the pictures bitmap effects make of vector objects when
+/// the drawing sets none.
+pub const VECTOR_FX_DPI: f64 = 300.0;
+/// The most pixels such a picture has (the resolution drops to stay under).
+const VECTOR_FX_MAX_PIXELS: f64 = 16_000_000.0;
+
+/// The resolution bitmap effects draw vector objects at: the drawing's
+/// rendering resolution (Page > Page Setup, 72 to 1200 dpi), else
+/// [`VECTOR_FX_DPI`] (#382).
+pub fn vector_fx_dpi(meta: &tracedraw_core::document::Metadata) -> f64 {
+    if meta.resolution_dpi.is_finite() && meta.resolution_dpi > 0.0 {
+        meta.resolution_dpi.clamp(72.0, 1200.0)
+    } else {
+        VECTOR_FX_DPI
+    }
+}
+
+/// The resolution on the page of the picture `fx` holds for `shape`.
+fn fx_picture_dpi(shape: &tracedraw_core::Shape, fx: &tracedraw_core::document::RasterFx) -> f64 {
+    let (sx, _) = tracedraw_core::document::transform_scale(shape.transform);
+    let mm = fx.rect.width() * sx;
+    if mm > 1e-9 {
+        f64::from(fx.width_px) * 25.4 / mm
+    } else {
+        0.0
+    }
+}
+
+/// A picture made at `have` dpi with `pixels` pixels is to be made again
+/// at `want` dpi: off by more than 5 % and not held down by the pixel
+/// limit.
+fn needs_new_resolution(have: f64, want: f64, pixels: f64) -> bool {
+    if !(have > 0.0 && want > 0.0) || (have - want).abs() <= 0.05 * want {
+        return false;
+    }
+    pixels * (want / have).powi(2) <= VECTOR_FX_MAX_PIXELS
+}
+
+/// A vector object drawn alone, without its bitmap effects, as a picture
+/// for them: in its own space scaled as its transform scales it (so the
+/// picture keeps its resolution on the page), with a margin for what
+/// spreads past its edges. The PNG, its size in pixels and its place in
+/// the object's own space.
+pub fn vector_base(
+    shape: &tracedraw_core::Shape,
+    symbols: &[tracedraw_core::Symbol],
+    dpi: f64,
+) -> Option<(Vec<u8>, u32, u32, tracedraw_core::Rect)> {
+    use tracedraw_core::geometry::{Affine, Rect, Size};
+    let (sx, sy) = tracedraw_core::document::transform_scale(shape.transform);
+    if !(sx > 1e-9 && sy > 1e-9 && sx.is_finite() && sy.is_finite()) {
+        return None;
+    }
+    let mut c = shape.clone();
+    c.raster_fx = None;
+    // A blend's steps are drawn beside the picture, not in it.
+    c.effects
+        .retain(|e| !tracedraw_core::document::beside_picture(e));
+    c.transform = Affine::scale_non_uniform(sx, sy);
+    let b = c.bounds();
+    if !(b.width().is_finite() && b.height().is_finite()) || b.width() <= 0.0 && b.height() <= 0.0 {
+        return None;
+    }
+    let stroke = c.stroke.as_ref().map(|s| s.width).unwrap_or(0.0);
+    let m = 2.0 + stroke + 0.08 * b.width().max(b.height());
+    let b = Rect::new(b.x0 - m, b.y0 - m, b.x1 + m, b.y1 + m);
+    let mut zoom = dpi / 25.4;
+    let pixels = b.width() * b.height() * zoom * zoom;
+    if pixels > VECTOR_FX_MAX_PIXELS {
+        zoom *= (VECTOR_FX_MAX_PIXELS / pixels).sqrt();
+    }
+    let w = (b.width() * zoom).ceil().max(1.0) as u32;
+    let h = (b.height() * zoom).ceil().max(1.0) as u32;
+    let mut tmp = tracedraw_core::Document::new("fx", Size::new(b.width(), b.height()));
+    tmp.symbols = symbols.to_vec();
+    c.transform = Affine::translate((-b.x0, -b.y0)) * c.transform;
+    let page = tmp.pages[0].id;
+    let layer = tmp.pages[0].layers[0].id;
+    tmp.layer_mut(layer).ok()?.shapes.push(c);
+    let pm = tracedraw_render::render_page(
+        &tmp,
+        page,
+        &tracedraw_render::RenderOptions {
+            width: w,
+            height: h,
+            view: tracedraw_render::ViewTransform {
+                zoom,
+                origin_x: 0.0,
+                origin_y: h as f64,
+            },
+            preview: None,
+            wireframe: false,
+            ..tracedraw_render::RenderOptions::default()
+        },
+    )?;
+    let png = pm.encode_png().ok()?;
+    let local = Rect::new(b.x0 / sx, b.y0 / sy, b.x1 / sx, b.y1 / sy);
+    Some((png, w, h, local))
+}
+
+/// Bitmap effects on a vector object with their picture made, or `None`
+/// when the object cannot be drawn.
+pub fn vector_raster_fx(
+    shape: &tracedraw_core::Shape,
+    symbols: &[tracedraw_core::Symbol],
+    effects: Vec<BitmapEffect>,
+    auto_inflate: bool,
+    dpi: f64,
+) -> Option<Box<tracedraw_core::document::RasterFx>> {
+    vector_raster_fx_until(shape, symbols, effects, auto_inflate, dpi, None)
+}
+
+/// [`vector_raster_fx`] that gives up (`None`) once `cancel` is raised,
+/// checked between the picture and each effect.
+pub fn vector_raster_fx_until(
+    shape: &tracedraw_core::Shape,
+    symbols: &[tracedraw_core::Symbol],
+    effects: Vec<BitmapEffect>,
+    auto_inflate: bool,
+    dpi: f64,
+    cancel: Option<&std::sync::atomic::AtomicBool>,
+) -> Option<Box<tracedraw_core::document::RasterFx>> {
+    use tracedraw_core::document::RasterFx;
+    let mut target = shape.clone();
+    target.raster_fx = Some(Box::new(RasterFx {
+        effects: effects.clone(),
+        rect: tracedraw_core::Rect::ZERO,
+        width_px: 0,
+        height_px: 0,
+        png: Vec::new().into(),
+        source: 0,
+    }));
+    let source = target.raster_source();
+    let (png, w, h, rect) = vector_base(shape, symbols, dpi)?;
+    let stack = BitmapFxStack {
+        rect,
+        width_px: w,
+        height_px: h,
+        png: png.into(),
+        effects: effects.clone(),
+    };
+    let (img, rect) = render_stack(&stack, auto_inflate, cancel)?;
+    let png = crate::bitmap_fx::encode(&img)?;
+    Some(Box::new(RasterFx {
+        effects,
+        rect,
+        width_px: img.width(),
+        height_px: img.height(),
+        png: png.into(),
+        source,
+    }))
+}
+
+/// Shapes may hold bitmap effects: everything but bitmaps (their own
+/// effects), text being edited aside, and hidden helpers.
+fn takes_vector_fx(kind: &tracedraw_core::document::ShapeKind) -> bool {
+    !matches!(kind, tracedraw_core::document::ShapeKind::Bitmap { .. })
+}
+
+impl crate::app::App {
+    /// Change the effects of the object `id`: a bitmap's (its original
+    /// kept aside), or a vector object's (drawn as their picture).
+    pub fn bitmap_fx_command(
+        &self,
+        id: tracedraw_core::ShapeId,
+        f: impl FnOnce(&mut Vec<BitmapEffect>),
+    ) -> Option<tracedraw_core::Command> {
+        // The same making as the dialogs' live preview (`fx::preview`).
+        self.fx_target(id)?.command(
+            f,
+            &self.doc().symbols,
+            self.doc().metadata.auto_inflate_bitmaps(),
+            vector_fx_dpi(&self.doc().metadata),
+            None,
+        )
+    }
+
+    /// Add an effect to every selected bitmap, in one undo step.
+    pub fn add_bitmap_effect(&mut self, e: BitmapEffect) {
+        let label = "Add Effect";
+        let ids: Vec<_> = self.selection.clone();
+        let cmds: Vec<_> = ids
+            .into_iter()
+            .filter_map(|id| self.bitmap_fx_command(id, |list| list.push(e.clone())))
+            .collect();
+        if cmds.is_empty() {
+            return;
+        }
+        if let Err(err) = self.engine.run_batch(label, &cmds) {
+            self.status = err.to_string();
+        }
+    }
+
+    /// Change the effect list of one bitmap, in one undo step.
+    pub fn edit_bitmap_effects(
+        &mut self,
+        id: tracedraw_core::ShapeId,
+        label: &'static str,
+        f: impl FnOnce(&mut Vec<BitmapEffect>),
+    ) {
+        if let Some(cmd) = self.bitmap_fx_command(id, f) {
+            if let Err(err) = self.engine.run_with_label(&cmd, label) {
+                self.status = err.to_string();
+            }
+        }
+    }
+
+    /// Image > Bitmap Padding > Automatic, the same switch as
+    /// Document Setup > General: effects rendered from now on that
+    /// spread past the edges grow the bitmap first.
+    pub fn set_auto_inflate_bitmaps(&mut self, on: bool) {
+        let mut metadata = self.doc().metadata.clone();
+        metadata.no_auto_inflate = !on;
+        if metadata != self.doc().metadata {
+            self.run(tracedraw_core::Command::SetMetadata { metadata });
+        }
+    }
+
+    /// The effects of a bitmap.
+    pub fn bitmap_effects(&self, id: tracedraw_core::ShapeId) -> Vec<BitmapEffect> {
+        self.bitmap_fx_stack(id)
+            .map(|s| s.effects)
+            .unwrap_or_default()
+    }
+
+    /// A bitmap's original pixels and effects, when it has effects; for a
+    /// vector object with bitmap effects, its picture without them (made
+    /// once per state of the object) and the effects.
+    pub fn bitmap_fx_stack(&self, id: tracedraw_core::ShapeId) -> Option<BitmapFxStack> {
+        use tracedraw_core::document::ShapeKind;
+        let s = self.doc().find_shape(id)?;
+        match &s.kind {
+            ShapeKind::Bitmap { fx: Some(st), .. } => Some((**st).clone()),
+            ShapeKind::Bitmap { .. } => None,
+            _ => {
+                let fx = s.raster_fx.as_ref()?;
+                let (png, w, h, rect) = self.vector_base_cached(s)?;
+                Some(BitmapFxStack {
+                    rect,
+                    width_px: w,
+                    height_px: h,
+                    png,
+                    effects: fx.effects.clone(),
+                })
+            }
+        }
+    }
+
+    /// [`vector_base`] of `s`, kept for the last object asked about until
+    /// it changes (the effect dialogs ask every frame). The picture is the
+    /// object without its effects, so a change of the effects alone (the
+    /// dialogs' live preview) keeps it.
+    pub fn vector_base_cached(
+        &self,
+        s: &tracedraw_core::Shape,
+    ) -> Option<(tracedraw_core::SharedBytes, u32, u32, tracedraw_core::Rect)> {
+        let source = match &s.raster_fx {
+            Some(_) => {
+                let mut bare = s.clone();
+                bare.raster_fx = None;
+                bare.raster_source()
+            }
+            None => s.raster_source(),
+        };
+        let key = (s.id, source);
+        if let Some((k, v)) = self.vector_fx_base.borrow().as_ref() {
+            if *k == key {
+                return Some(v.clone());
+            }
+        }
+        let (png, w, h, rect) =
+            vector_base(s, &self.doc().symbols, vector_fx_dpi(&self.doc().metadata))?;
+        // Shared from here on: every frame that asks takes a pointer.
+        let v = (png.into(), w, h, rect);
+        *self.vector_fx_base.borrow_mut() = Some((key, v.clone()));
+        Some(v)
+    }
+
+    /// Each frame: remake the picture of every object whose bitmap effects
+    /// were made from an earlier state of it (moved nodes, a new colour,
+    /// a scale), as part of the step that changed it.
+    pub fn sync_raster_fx(&mut self) {
+        fn walk(s: &tracedraw_core::Shape, dpi: f64, out: &mut Vec<tracedraw_core::Shape>) {
+            if let Some(fx) = &s.raster_fx {
+                // Made from an earlier state, or at another resolution than
+                // the drawing's (it changed in Document Info).
+                let pixels = f64::from(fx.width_px) * f64::from(fx.height_px);
+                if fx.source != s.raster_source()
+                    || (!fx.png.is_empty()
+                        && needs_new_resolution(fx_picture_dpi(s, fx), dpi, pixels))
+                {
+                    out.push(s.clone());
+                }
+            }
+            if let tracedraw_core::document::ShapeKind::Group { children } = &s.kind {
+                for c in children {
+                    walk(c, dpi, out);
+                }
+            }
+        }
+        if !self.has_document() {
+            return;
+        }
+        let dpi = vector_fx_dpi(&self.doc().metadata);
+        let mut stale = Vec::new();
+        for layer in self.doc().all_layers() {
+            for s in &layer.shapes {
+                walk(s, dpi, &mut stale);
+            }
+        }
+        for s in stale {
+            let Some(fx) = &s.raster_fx else { continue };
+            let made = vector_raster_fx(
+                &s,
+                &self.doc().symbols,
+                fx.effects.clone(),
+                self.doc().metadata.auto_inflate_bitmaps(),
+                dpi,
+            );
+            let cmd = tracedraw_core::Command::SetRasterFx {
+                shape: s.id,
+                fx: made.or_else(|| {
+                    // Not drawable now: keep the effects, mark as made.
+                    let mut f = fx.clone();
+                    f.png = Default::default();
+                    let mut t = s.clone();
+                    t.raster_fx = Some(f.clone());
+                    f.source = t.raster_source();
+                    Some(f)
+                }),
+            };
+            if let Err(e) = self.engine.amend(&cmd) {
+                self.status = e.to_string();
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use image::{ImageBuffer, Rgba};
+
+    fn img() -> RgbaImage {
+        ImageBuffer::from_fn(24, 20, |x, y| {
+            Rgba([(x * 10) as u8, (y * 12) as u8, ((x + y) * 5) as u8, 255])
+        })
+    }
+
+    #[test]
+    fn every_effect_runs_keeps_size_and_has_names() {
+        let src = img();
+        let mut ids = std::collections::BTreeSet::new();
+        for s in catalog() {
+            assert!(ids.insert(s.id), "duplicate {}", s.id);
+            let e = new_effect(s.id);
+            let out = apply_effect(&src, &e);
+            assert_eq!(out.dimensions(), src.dimensions(), "{}", s.id);
+            // Extreme settings do not break it either.
+            let mut hi = e.clone();
+            for p in s.params {
+                let v = match p.kind {
+                    ParamKind::Range { max, .. } => max,
+                    ParamKind::Angle { .. } => 359.0,
+                    ParamKind::Choice { options, .. } => (options.len() - 1) as f64,
+                    ParamKind::Check { .. } => 1.0,
+                    ParamKind::Color { .. } => 16_777_215.0,
+                };
+                hi.params.insert(p.name.to_string(), v);
+            }
+            assert_eq!(
+                apply_effect(&src, &hi).dimensions(),
+                src.dimensions(),
+                "{}",
+                s.id
+            );
+            let mut lo = e.clone();
+            for p in s.params {
+                let v = match p.kind {
+                    ParamKind::Range { min, .. } => min,
+                    _ => 0.0,
+                };
+                lo.params.insert(p.name.to_string(), v);
+            }
+            assert_eq!(
+                apply_effect(&src, &lo).dimensions(),
+                src.dimensions(),
+                "{}",
+                s.id
+            );
+            assert!(
+                crate::i18n::has_english(&format!("fx.{}", s.id)),
+                "fx.{}",
+                s.id
+            );
+            for p in s.params {
+                assert!(
+                    crate::i18n::has_english(&format!("fxp.{}", p.name)),
+                    "fxp.{}",
+                    p.name
+                );
+                if let ParamKind::Choice { options, .. } = p.kind {
+                    for o in options {
+                        assert!(crate::i18n::has_english(&format!("fxo.{o}")), "fxo.{o}");
+                    }
+                }
+            }
+        }
+        assert!(ids.len() >= 80, "{}", ids.len());
+        // Every effect is in a group.
+        let grouped: usize = groups().iter().map(|g| g.1.len()).sum();
+        assert_eq!(grouped, ids.len());
+    }
+
+    /// Largest channel difference between two images of one size.
+    fn diff(a: &RgbaImage, b: &RgbaImage) -> u8 {
+        a.pixels()
+            .zip(b.pixels())
+            .flat_map(|(p, q)| (0..4).map(move |c| p[c].abs_diff(q[c])))
+            .max()
+            .unwrap_or(0)
+    }
+
+    fn variance(i: &RgbaImage) -> f32 {
+        let v: Vec<f32> = i.pixels().map(util::luma).collect();
+        let m = v.iter().sum::<f32>() / v.len() as f32;
+        v.iter().map(|x| (x - m) * (x - m)).sum::<f32>() / v.len() as f32
+    }
+
+    fn run(src: &RgbaImage, id: &str, set: &[(&str, f64)]) -> RgbaImage {
+        let mut e = new_effect(id);
+        for (k, v) in set {
+            e.params.insert(k.to_string(), *v);
+        }
+        apply_effect(src, &e)
+    }
+
+    #[test]
+    fn neutral_settings_leave_the_image_alone() {
+        let src = img();
+        for id in [
+            "brightness_contrast_intensity",
+            "color_balance",
+            "gamma",
+            "hue_saturation_lightness",
+            "selective_color",
+            "channel_mixer",
+            "image_adjustments",
+            "tone_curve",
+            "contrast_enhancement",
+        ] {
+            let out = run(&src, id, &[]);
+            assert!(diff(&src, &out) <= 1, "{id}: {}", diff(&src, &out));
+        }
+    }
+
+    #[test]
+    fn effects_do_what_their_names_say() {
+        let src = img();
+        // Inverting twice gives the image back.
+        let inv = run(&src, "invert_colors", &[]);
+        assert_eq!(run(&inv, "invert_colors", &[]), src);
+        // Desaturate leaves grays; posterize to two levels leaves 0 and 255.
+        assert!(run(&src, "desaturate", &[])
+            .pixels()
+            .all(|p| p[0] == p[1] && p[1] == p[2]));
+        let two = run(&src, "posterize", &[("level", 2.0)]);
+        assert!(two
+            .pixels()
+            .all(|p| (0..3).all(|c| p[c] == 0 || p[c] == 255)));
+        // More brightness never darkens.
+        let bright = run(
+            &src,
+            "brightness_contrast_intensity",
+            &[("brightness", 50.0)],
+        );
+        assert!(bright
+            .pixels()
+            .zip(src.pixels())
+            .all(|(a, b)| util::luma(a) + 0.5 >= util::luma(b)));
+        assert!(diff(&bright, &src) > 20);
+        // Blurs lower the contrast of a checkerboard, sharpening raises it.
+        let checker: RgbaImage = ImageBuffer::from_fn(16, 16, |x, y| {
+            if (x / 2 + y / 2) % 2 == 0 {
+                Rgba([200, 200, 200, 255])
+            } else {
+                Rgba([60, 60, 60, 255])
+            }
+        });
+        let v0 = variance(&checker);
+        assert!(variance(&run(&checker, "gaussian_blur", &[("radius", 2.0)])) < v0 * 0.5);
+        assert!(variance(&run(&checker, "unsharp_mask", &[("percentage", 200.0)])) > v0);
+        // The median removes a lone speck.
+        let mut speck: RgbaImage = ImageBuffer::from_pixel(9, 9, Rgba([100, 100, 100, 255]));
+        speck.put_pixel(4, 4, Rgba([255, 255, 255, 255]));
+        assert_eq!(run(&speck, "median", &[]).get_pixel(4, 4)[0], 100);
+        // Colour changes keep transparency.
+        let mut half = src.clone();
+        for p in half.pixels_mut() {
+            p[3] = 128;
+        }
+        for id in [
+            "sepia_toning",
+            "colorize",
+            "hue_saturation_lightness",
+            "tone_curve",
+        ] {
+            assert!(run(&half, id, &[]).pixels().all(|p| p[3] == 128), "{id}");
+        }
+        // A tone curve through (0, 255) and (255, 0) inverts.
+        let mut e = new_effect("tone_curve");
+        adjust::curve_into(
+            &mut e.params,
+            "rgb",
+            &crate::bitmap_modes::ToneCurve::line(255.0, 0.0),
+        );
+        assert!(diff(&apply_effect(&src, &e), &inv) <= 1);
+    }
+
+    #[test]
+    fn blurs_spread_colour_not_black_into_transparency() {
+        let spot: RgbaImage = ImageBuffer::from_fn(30, 30, |x, y| {
+            if (10..20).contains(&x) && (10..20).contains(&y) {
+                Rgba([250, 40, 40, 255])
+            } else {
+                Rgba([0, 0, 0, 0])
+            }
+        });
+        let cases: [(&str, &[(&str, f64)]); 6] = [
+            ("gaussian_blur", &[("radius", 6.0)]),
+            ("motion_blur", &[("distance", 12.0), ("direction", 30.0)]),
+            ("low_pass", &[("radius", 4.0), ("percentage", 100.0)]),
+            ("jagged_edges", &[("width", 3.0), ("height", 3.0)]),
+            ("radial_blur", &[("amount", 60.0)]),
+            ("zoom", &[("amount", 60.0)]),
+        ];
+        for (id, set) in cases {
+            let out = run(&spot, id, set);
+            assert!(out.pixels().any(|p| p[3] > 0 && p[3] < 255), "{id} spreads");
+            for p in out.pixels().filter(|p| p[3] > 16) {
+                assert!(p[0] > 225 && p[1] < 70, "{id}: {p:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn tone_curve_styles_gamma_freehand_and_balance() {
+        use adjust::*;
+        let mut v = BTreeMap::new();
+        assert_eq!(curve_style(&v, "rgb"), 0);
+        v.insert("rgblinear".to_string(), 1.0);
+        assert_eq!(curve_style(&v, "rgb"), 1);
+        set_curve_style(&mut v, "rgb", 3);
+        assert_eq!((curve_style(&v, "rgb"), v["rgblinear"]), (3, 0.0));
+        set_curve_style(&mut v, "r", 2);
+        assert_eq!((curve_style(&v, "r"), v["rlinear"]), (2, 1.0));
+        // Gamma 2 lifts 64 to about 128.
+        v.insert("rgbgamma".to_string(), 2.0);
+        let mut e = new_effect("tone_curve");
+        e.params = v.clone();
+        e.params.remove("rstyle");
+        e.params.remove("rlinear");
+        let gray: RgbaImage = ImageBuffer::from_pixel(2, 2, Rgba([64, 64, 64, 255]));
+        let out = apply_effect(&gray, &e);
+        assert!(
+            (out.get_pixel(0, 0)[0] as i32 - 128).abs() <= 1,
+            "{:?}",
+            out.get_pixel(0, 0)
+        );
+        // Freehand: points every 4 levels and the last at 255.
+        let lut: [f32; 256] = std::array::from_fn(|x| 255.0 - x as f32);
+        let pts = freehand_points(&lut);
+        assert_eq!(
+            (pts.len(), pts[1], *pts.last().expect("points")),
+            (65, (4.0, 251.0), (255.0, 0.0))
+        );
+        let c = crate::bitmap_modes::ToneCurve {
+            points: pts,
+            smooth: false,
+        };
+        let sm = smoothed(&c);
+        assert_eq!((sm[0], sm[255]), (255.0, 0.0));
+        assert!((sm[100] - 155.0).abs() < 0.5);
+        // Auto Balance Tone stretches 50..200 to 0..255.
+        let img: RgbaImage = ImageBuffer::from_fn(151, 4, |x, _| {
+            let v = (50 + x) as u8;
+            Rgba([v, v, v, 255])
+        });
+        let curves = balance_curves(&img, 0.005);
+        assert!(curves[0].eval(50.0) < 1.0 && curves[0].eval(200.0) > 254.0);
+        assert!((curves[1].eval(125.0) - 127.5).abs() < 1.0);
+    }
+
+    #[test]
+    fn channel_lists_limit_levels_and_target_balance() {
+        let gray: RgbaImage = ImageBuffer::from_pixel(2, 2, Rgba([64, 64, 64, 255]));
+        let red_only = run(
+            &gray,
+            "contrast_enhancement",
+            &[("channel", 1.0), ("input_high", 128.0)],
+        );
+        assert_eq!(red_only.get_pixel(0, 0).0, [128, 64, 64, 255]);
+        let all = run(&gray, "contrast_enhancement", &[("input_high", 128.0)]);
+        assert_eq!(all.get_pixel(0, 0).0, [128, 128, 128, 255]);
+        // Sample 64 to target 128: green alone, then every channel.
+        let set = [
+            ("mid_sample", 0x404040 as f64),
+            ("mid_target", 0x808080 as f64),
+            ("channel", 2.0),
+        ];
+        assert_eq!(
+            run(&gray, "target_balance", &set).get_pixel(0, 0).0,
+            [64, 128, 64, 255]
+        );
+        let mut every = set.to_vec();
+        every.push(("all_channels", 1.0));
+        assert_eq!(
+            run(&gray, "target_balance", &every).get_pixel(0, 0).0,
+            [128, 128, 128, 255]
+        );
+    }
+
+    #[test]
+    fn previews_scale_pixel_sizes_only() {
+        let mut e = new_effect("unsharp_mask");
+        e.params.insert("radius".into(), 10.0);
+        let s = scaled(&e, 0.25);
+        assert_eq!(s.params["radius"], 2.5);
+        // Percentages stay; defaults scale too, but not below the minimum.
+        assert_eq!(s.params.get("percentage"), None);
+        let tiny = scaled(&new_effect("gaussian_blur"), 0.01);
+        assert_eq!(tiny.params["radius"], 0.1);
+        assert_eq!(scaled(&new_effect("no_such"), 0.5), new_effect("no_such"));
+    }
+
+    #[test]
+    fn settings_fall_back_to_defaults_and_stay_in_range() {
+        let s = spec("gaussian_blur").expect("gaussian blur");
+        let mut v = BTreeMap::new();
+        let p = P {
+            spec: s,
+            values: &v,
+        };
+        assert_eq!(p.f("radius"), 1.0);
+        v.insert("radius".to_string(), 1e9);
+        let p = P {
+            spec: s,
+            values: &v,
+        };
+        assert!(p.f("radius") <= 250.0);
+        v.insert("radius".to_string(), f64::NAN);
+        let p = P {
+            spec: s,
+            values: &v,
+        };
+        assert_eq!(p.f("radius"), 1.0);
+        assert_eq!(p.f("no_such"), 0.0);
+    }
+
+    #[test]
+    fn stacks_keep_the_original_and_inflate_for_spreading_effects() {
+        let src = img();
+        let png = crate::bitmap_fx::encode(&src).expect("png");
+        let mut blur = new_effect("gaussian_blur");
+        blur.params.insert("radius".into(), 3.0);
+        let stack = BitmapFxStack {
+            rect: tracedraw_core::Rect::new(0.0, 0.0, 24.0, 20.0),
+            width_px: 24,
+            height_px: 20,
+            png: png.into(),
+            effects: vec![blur.clone()],
+        };
+        let (out, rect) = render_stack(&stack, true, None).expect("renders");
+        assert!(out.width() > 24 && rect.x0 < 0.0, "{:?}", rect);
+        let (flat, r2) = render_stack(&stack, false, None).expect("renders");
+        assert_eq!((flat.dimensions(), r2), ((24, 20), stack.rect));
+        // Hidden effects do nothing.
+        let mut hidden = stack.clone();
+        hidden.effects[0].visible = false;
+        let (same, _) = render_stack(&hidden, true, None).expect("renders");
+        assert_eq!(same, src);
+    }
+
+    #[test]
+    fn effects_are_added_edited_and_removed_in_single_steps() {
+        use tracedraw_core::document::ShapeKind;
+        let mut app = crate::app::App::headless();
+        let src = img();
+        let png = crate::bitmap_fx::encode(&src).expect("png");
+        let id = app
+            .new_shape(ShapeKind::Bitmap {
+                rect: tracedraw_core::Rect::new(0.0, 0.0, 24.0, 20.0),
+                width_px: 24,
+                height_px: 20,
+                png: png.clone().into(),
+                fx: None,
+            })
+            .expect("bitmap");
+        app.select(vec![id]);
+        let depth = app.engine.history_labels().0.len();
+        app.add_bitmap_effect(new_effect("invert_colors"));
+        assert_eq!(app.engine.history_labels().0.len(), depth + 1);
+        assert_eq!(app.bitmap_effects(id).len(), 1);
+        let shown = |app: &crate::app::App| match &app.doc().find_shape(id).expect("bitmap").kind {
+            ShapeKind::Bitmap { png, .. } => crate::bitmap_fx::decode(png).expect("png"),
+            _ => panic!(),
+        };
+        assert_eq!(shown(&app).get_pixel(0, 0)[0], 255);
+        // Hide it: the original shows again.
+        app.edit_bitmap_effects(id, "Hide Effect", |l| l[0].visible = false);
+        assert_eq!(shown(&app), src);
+        // Remove it: no stack left.
+        app.edit_bitmap_effects(id, "Delete Effect", |l| l.clear());
+        assert!(matches!(
+            app.doc().find_shape(id).expect("bitmap").kind,
+            ShapeKind::Bitmap { fx: None, .. }
+        ));
+        app.undo();
+        app.undo();
+        assert_eq!(shown(&app).get_pixel(0, 0)[0], 255);
+    }
+
+    #[test]
+    fn auto_inflate_is_a_document_switch() {
+        use tracedraw_core::document::ShapeKind;
+        let mut app = crate::app::App::headless();
+        let png = crate::bitmap_fx::encode(&img()).expect("png");
+        let id = app
+            .new_shape(ShapeKind::Bitmap {
+                rect: tracedraw_core::Rect::new(0.0, 0.0, 24.0, 20.0),
+                width_px: 24,
+                height_px: 20,
+                png: png.into(),
+                fx: None,
+            })
+            .expect("bitmap");
+        app.select(vec![id]);
+        assert!(app.doc().metadata.auto_inflate_bitmaps());
+        app.set_auto_inflate_bitmaps(false);
+        assert!(!app.doc().metadata.auto_inflate_bitmaps());
+        let size = |app: &crate::app::App| match &app.doc().find_shape(id).expect("bitmap").kind {
+            ShapeKind::Bitmap {
+                width_px,
+                height_px,
+                ..
+            } => (*width_px, *height_px),
+            _ => (0, 0),
+        };
+        let mut blur = new_effect("gaussian_blur");
+        blur.params.insert("radius".into(), 4.0);
+        app.add_bitmap_effect(blur.clone());
+        assert_eq!(size(&app), (24, 20));
+        // Back on: the next change renders the stack grown.
+        app.set_auto_inflate_bitmaps(true);
+        app.edit_bitmap_effects(id, "Edit Effect", |l| l[0] = blur);
+        assert_eq!(size(&app), (24 + 16, 20 + 16));
+        app.undo();
+        app.undo();
+        assert!(!app.doc().metadata.auto_inflate_bitmaps());
+    }
+
+    fn red_rect_app() -> (crate::app::App, tracedraw_core::ShapeId) {
+        use tracedraw_core::{document::ShapeKind, geometry::Rect, Color, Command, Fill};
+        let mut app = crate::app::App::headless();
+        let id = app
+            .new_shape(ShapeKind::Rect {
+                rect: Rect::new(20.0, 20.0, 60.0, 40.0),
+                radius: 0.0,
+                corners: None,
+            })
+            .expect("rect");
+        app.run(Command::SetFill {
+            shapes: vec![id],
+            fill: Fill::Solid(Color::rgb8(220, 20, 20)),
+        });
+        app.select(vec![id]);
+        (app, id)
+    }
+
+    fn pixel_at(app: &crate::app::App, x_mm: f64, y_mm: f64) -> [u8; 4] {
+        let doc = app.doc();
+        let pid = doc.pages[0].id;
+        let pm = tracedraw_render::render_page_image(doc, pid, 25.4).expect("render");
+        let h = pm.height() as f64;
+        let px = pm
+            .pixel(x_mm as u32, (h - y_mm) as u32)
+            .expect("in the page")
+            .demultiply();
+        [px.red(), px.green(), px.blue(), px.alpha()]
+    }
+
+    #[test]
+    fn bitmap_effects_on_a_vector_object_draw_its_picture() {
+        let (mut app, id) = red_rect_app();
+        assert_eq!(pixel_at(&app, 40.0, 30.0)[..3], [220, 20, 20]);
+        app.add_bitmap_effect(new_effect("invert_colors"));
+        let s = app.doc().find_shape(id).expect("shape").clone();
+        // Still a rectangle, drawn as its inverted picture.
+        assert!(matches!(
+            s.kind,
+            tracedraw_core::document::ShapeKind::Rect { .. }
+        ));
+        let fx = s.raster_fx.clone().expect("effects");
+        assert_eq!(fx.effects.len(), 1);
+        assert!(!fx.png.is_empty());
+        assert_eq!(fx.source, s.raster_source());
+        let p = pixel_at(&app, 40.0, 30.0);
+        assert!(p[0] < 60 && p[1] > 200 && p[2] > 200, "{p:?}");
+        // The Properties docker lists it like a bitmap's.
+        assert_eq!(app.bitmap_effects(id).len(), 1);
+        assert!(app.bitmap_fx_stack(id).is_some());
+        // Hidden: drawn as itself again.
+        app.edit_bitmap_effects(id, "Show or Hide Effect", |l| l[0].visible = false);
+        assert_eq!(pixel_at(&app, 40.0, 30.0)[..3], [220, 20, 20]);
+        app.edit_bitmap_effects(id, "Show or Hide Effect", |l| l[0].visible = true);
+        // Undo takes back the showing, the hiding, then the effect.
+        app.undo();
+        app.undo();
+        assert!(app.doc().find_shape(id).expect("shape").raster_fx.is_some());
+        app.undo();
+        assert!(app.doc().find_shape(id).expect("shape").raster_fx.is_none());
+        assert_eq!(pixel_at(&app, 40.0, 30.0)[..3], [220, 20, 20]);
+    }
+
+    #[test]
+    fn the_picture_follows_the_object_and_flattens_to_a_bitmap() {
+        use tracedraw_core::{geometry::Affine, Color, Command, Fill};
+        let (mut app, id) = red_rect_app();
+        app.add_bitmap_effect(new_effect("invert_colors"));
+        let made = app.doc().find_shape(id).unwrap().raster_fx.clone().unwrap();
+        // A move keeps the picture (it lives in the object's own space).
+        app.run(Command::TransformShapes {
+            shapes: vec![id],
+            transform: Affine::translate((50.0, 50.0)),
+        });
+        app.sync_raster_fx();
+        assert_eq!(
+            app.doc().find_shape(id).unwrap().raster_fx.as_ref(),
+            Some(&made)
+        );
+        let p = pixel_at(&app, 90.0, 80.0);
+        assert!(p[0] < 60 && p[1] > 200, "{p:?}");
+        // A new colour makes it again, in the same step.
+        app.run(Command::SetFill {
+            shapes: vec![id],
+            fill: Fill::Solid(Color::rgb8(0, 0, 255)),
+        });
+        let stale = app.doc().find_shape(id).unwrap().clone();
+        assert_ne!(
+            stale.raster_fx.as_ref().unwrap().source,
+            stale.raster_source()
+        );
+        app.sync_raster_fx();
+        let s = app.doc().find_shape(id).unwrap().clone();
+        assert_eq!(s.raster_fx.as_ref().unwrap().source, s.raster_source());
+        let p = pixel_at(&app, 90.0, 80.0);
+        assert!(
+            p[0] > 200 && p[1] > 200 && p[2] < 60,
+            "inverted blue is yellow: {p:?}"
+        );
+        // Flatten Effects: a bitmap in its place, looking the same.
+        app.select(vec![id]);
+        app.flatten_effects();
+        let s = app.doc().find_shape(id).unwrap().clone();
+        assert!(matches!(
+            s.kind,
+            tracedraw_core::document::ShapeKind::Bitmap { .. }
+        ));
+        assert!(s.raster_fx.is_none());
+        let p = pixel_at(&app, 90.0, 80.0);
+        assert!(p[0] > 200 && p[1] > 200 && p[2] < 60, "{p:?}");
+        // Exports draw the picture too.
+        let svg = tracedraw_io::svg::page_to_svg(app.doc(), 0);
+        assert!(svg.contains("<image"));
+    }
+
+    /// A bitmap effect on the start of a blend leaves the blend drawn: its
+    /// steps stay vector objects around the picture (#1043).
+    #[test]
+    fn a_blend_keeps_its_steps_when_its_start_gets_a_bitmap_effect() {
+        use tracedraw_core::live::{BlendOptions, Effect};
+        use tracedraw_core::{geometry::Affine, Color, Command, Fill};
+        let (mut app, id) = red_rect_app();
+        let mut end = app.doc().find_shape(id).unwrap().clone();
+        end.transform = Affine::translate((100.0, 0.0));
+        end.fill = Fill::Solid(Color::rgb8(20, 20, 220));
+        let blend = |end: &tracedraw_core::Shape| Effect::Blend {
+            end: Box::new(end.clone()),
+            steps: 2,
+            accel_objects: 0.0,
+            accel_colors: 0.0,
+            rotation: 0.0,
+            path: None,
+            rotate_on_path: false,
+            end_id: None,
+            options: BlendOptions::default(),
+        };
+        app.run(Command::SetEffectStack {
+            shape: id,
+            effects: vec![blend(&end)],
+            parked: Vec::new(),
+        });
+        let step = pixel_at(&app, 75.0, 30.0);
+        assert!(step[2] > 60 && step[1] < 60, "a step between: {step:?}");
+        app.add_bitmap_effect(new_effect("invert_colors"));
+        // The start is its inverted picture, the step and the end as they were.
+        let p = pixel_at(&app, 30.0, 30.0);
+        assert!(p[0] < 60 && p[1] > 200 && p[2] > 200, "{p:?}");
+        assert_eq!(pixel_at(&app, 75.0, 30.0), step);
+        assert_eq!(pixel_at(&app, 140.0, 30.0)[..3], [20, 20, 220]);
+        // The picture holds the start alone: a new end does not make it again.
+        let made = app.doc().find_shape(id).unwrap().raster_fx.clone().unwrap();
+        end.transform = Affine::translate((120.0, 0.0));
+        app.run(Command::SetEffectStack {
+            shape: id,
+            effects: vec![blend(&end)],
+            parked: Vec::new(),
+        });
+        app.sync_raster_fx();
+        let s = app.doc().find_shape(id).unwrap().clone();
+        assert_eq!(s.raster_fx.as_ref(), Some(&made));
+        assert_eq!(pixel_at(&app, 170.0, 30.0)[..3], [20, 20, 220]);
+        // Exports draw the steps too.
+        let svg = tracedraw_io::svg::page_to_svg(app.doc(), 0);
+        assert!(svg.contains("<image"));
+        assert!(svg.matches("<path").count() + svg.matches("<rect").count() >= 3);
+    }
+}
+
+#[cfg(test)]
+mod resolution_tests {
+    /// Effects on vector objects are drawn at the drawing's rendering
+    /// resolution, and made again when it changes (#382).
+    #[test]
+    fn vector_effects_follow_the_rendering_resolution() {
+        use tracedraw_core::geometry::Rect;
+        let mut app = crate::app::App::headless();
+        let id = app
+            .new_shape(tracedraw_core::ShapeKind::Rect {
+                rect: Rect::new(10.0, 10.0, 60.0, 40.0),
+                radius: 0.0,
+                corners: None,
+            })
+            .expect("rect");
+        app.select(vec![id]);
+        app.apply_fill(tracedraw_core::Fill::Solid(tracedraw_core::Color::BLACK));
+        app.add_bitmap_effect(super::new_effect("rotate_3d"));
+        let dpi_of = |app: &crate::app::App| {
+            let s = app.doc().find_shape(id).cloned().expect("shape");
+            let fx = s.raster_fx.clone().expect("fx");
+            super::fx_picture_dpi(&s, &fx)
+        };
+        assert!((dpi_of(&app) - 300.0).abs() < 15.0, "{}", dpi_of(&app));
+        let mut md = app.doc().metadata.clone();
+        md.resolution_dpi = 600.0;
+        app.run(tracedraw_core::Command::SetMetadata { metadata: md });
+        app.sync_raster_fx();
+        assert!((dpi_of(&app) - 600.0).abs() < 30.0, "{}", dpi_of(&app));
+        // Nothing more to make at that resolution.
+        let rev = app.engine.revision();
+        app.sync_raster_fx();
+        assert_eq!(app.engine.revision(), rev);
+        assert!(super::needs_new_resolution(300.0, 600.0, 1e6));
+        assert!(!super::needs_new_resolution(300.0, 1200.0, 2e6));
+        assert!(!super::needs_new_resolution(590.0, 600.0, 1e6));
+    }
+}

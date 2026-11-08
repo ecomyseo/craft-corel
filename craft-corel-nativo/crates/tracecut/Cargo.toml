@@ -1,0 +1,10 @@
+[package]
+name = "tracedraw-tracecut"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "TraceCut for TraceDraw: geometry for cutting plotters, nesting and measuring"
+
+[dependencies]
+tracedraw-core.workspace = true
+serde.workspace = true

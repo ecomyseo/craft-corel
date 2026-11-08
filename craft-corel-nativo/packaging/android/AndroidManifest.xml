@@ -1,0 +1,106 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The Android app (docs/behavior/android.md): TraceDrawActivity, a
+     NativeActivity written in packaging/android/java, loads libtracedraw.so,
+     the editor compiled as a shared library, which draws and reads touch
+     input itself; the activity's Java methods reach the system's document
+     picker, clipboard, print service and share sheet for it. The version code and name are filled in
+     by scripts/android/build.sh from Cargo.toml. -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="dev.tracedraw.app">
+
+    <!-- Android 7.0 (API 24) and later, built for Android 16 (API 36), the
+         level Google Play asks of new apps; the build links against the
+         same platform. -->
+    <uses-sdk android:minSdkVersion="24" android:targetSdkVersion="36" />
+
+    <!-- Tablets, phones, Chromebooks: a touch screen is not required (a
+         mouse and keyboard work as on the desktop). -->
+    <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
+    <uses-feature android:name="android.hardware.faketouch" android:required="false" />
+    <uses-feature android:glEsVersion="0x00030000" android:required="true" />
+
+    <!-- Updates and the AI Drawing service (ureq) need the network;
+         nothing else does. Files come and go through the system's document
+         picker (Storage Access Framework), which needs no storage
+         permission. -->
+    <uses-permission android:name="android.permission.INTERNET" />
+
+    <application
+        android:label="TraceDraw"
+        android:icon="@mipmap/ic_launcher"
+        android:allowBackup="true"
+        android:hasCode="true"
+        android:extractNativeLibs="true"
+        android:theme="@android:style/Theme.Material.NoActionBar.Fullscreen">
+        <!-- The editor cannot start again inside its process (one winit
+             event loop per process), so the system should not relaunch
+             the activity: the configuration changes the editor follows
+             by itself are declared. The screen density is not (a new
+             density starts the editor afresh at its new scale), and a
+             change of the system's resource overlays (wallpaper colours,
+             icon shapes, display cutout) cannot be declared: either
+             relaunches the activity, which then ends the process once
+             the drawings are backed up (TraceDrawActivity.onDestroy);
+             stateNotNeeded makes the system keep the activity and start
+             it again in a new process instead of closing it. -->
+        <activity
+            android:name="dev.tracedraw.app.TraceDrawActivity"
+            android:label="TraceDraw"
+            android:exported="true"
+            android:launchMode="singleTask"
+            android:stateNotNeeded="true"
+            android:screenOrientation="unspecified"
+            android:windowSoftInputMode="adjustResize"
+            android:configChanges="orientation|keyboardHidden|keyboard|screenSize|screenLayout|smallestScreenSize|uiMode|locale|layoutDirection|navigation|touchscreen|mcc|mnc|fontScale|fontWeightAdjustment|colorMode|grammaticalGender">
+            <!-- The library the activity loads: lib/arm64-v8a/libtracedraw.so. -->
+            <meta-data android:name="android.app.lib_name" android:value="tracedraw" />
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+            <!-- Documents other apps open with TraceDraw (a file manager's
+                 Open with, a mail's attachment, Share): they open in tabs
+                 of the running editor (#646, TraceDrawActivity.onNewIntent).
+                 image/* takes pictures and the types file managers give
+                 .cdr and .svg files; .tdraw and many .cdr files come as
+                 octet-stream. -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <action android:name="android.intent.action.EDIT" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:scheme="content" />
+                <data android:scheme="file" />
+                <data android:mimeType="application/x-tdraw" />
+                <data android:mimeType="application/octet-stream" />
+                <data android:mimeType="application/zip" />
+                <data android:mimeType="application/x-cdr" />
+                <data android:mimeType="application/cdr" />
+                <data android:mimeType="image/*" />
+                <data android:mimeType="application/pdf" />
+                <data android:mimeType="application/postscript" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.SEND" />
+                <action android:name="android.intent.action.SEND_MULTIPLE" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="application/x-tdraw" />
+                <data android:mimeType="application/octet-stream" />
+                <data android:mimeType="application/zip" />
+                <data android:mimeType="application/x-cdr" />
+                <data android:mimeType="application/cdr" />
+                <data android:mimeType="image/*" />
+                <data android:mimeType="application/pdf" />
+                <data android:mimeType="application/postscript" />
+            </intent-filter>
+        </activity>
+        <!-- The files the editor hands to another app (a PDF through the
+             share sheet, a picture to edit, #1398), served from the app's
+             private folders under content URIs. Not exported: an app
+             reaches a file only through the grant of the intent naming it. -->
+        <provider
+            android:name="dev.tracedraw.app.SharedFiles"
+            android:authorities="dev.tracedraw.app.files"
+            android:exported="false"
+            android:grantUriPermissions="true" />
+    </application>
+</manifest>

@@ -1,0 +1,3332 @@
+//! Node editing on a `BezPath`, the model behind the Shape tool.
+//!
+//! A node is the end point of a path element. Its incoming control point
+//! is `c2` of its own `CurveTo`; its outgoing control point is `c1` of the
+//! next `CurveTo`. Quadratics are elevated to cubics on first edit so there
+//! is one kind of curve to deal with.
+
+use crate::geometry::{BezPath, PathEl, Point, Vec2};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum NodeType {
+    /// Handles move independently.
+    Cusp,
+    /// Handles stay collinear, lengths independent.
+    Smooth,
+    /// Handles stay collinear and equal in length.
+    Symmetrical,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Node {
+    /// Index of the element that ends at this node.
+    pub index: usize,
+    pub pos: Point,
+    pub ctrl_in: Option<Point>,
+    pub ctrl_out: Option<Point>,
+    /// First node of a subpath.
+    pub is_start: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Which {
+    In,
+    Out,
+}
+
+/// For every closed subpath whose last segment ends back on its start,
+/// the pair (start index, index of that last segment). The two are one
+/// node: the start, whose incoming handle is the last segment's `c2`.
+fn closing_twins(els: &[PathEl]) -> Vec<(usize, usize)> {
+    let mut out = Vec::new();
+    let mut start = 0;
+    for i in 0..els.len() {
+        match els[i] {
+            PathEl::MoveTo(_) => start = i,
+            PathEl::ClosePath if i > start + 1 => {
+                if let (PathEl::MoveTo(s), Some(end)) = (els[start], end_point(&els[i - 1])) {
+                    if (s - end).hypot() < 1e-9 {
+                        out.push((start, i - 1));
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    out
+}
+
+/// The element whose segment ends at node `index`: the node's own, or for
+/// the start of a closed subpath its closing segment (the last segment
+/// back on the start, else the closing line). `None` for the start of an
+/// open subpath, which no segment reaches, and for an index that is no
+/// node.
+pub fn segment_into(path: &BezPath, index: usize) -> Option<usize> {
+    let els = path.elements();
+    match els.get(index)? {
+        PathEl::MoveTo(_) => {
+            if let Some(last) = twin_of(els, index) {
+                return Some(last);
+            }
+            els.iter()
+                .enumerate()
+                .skip(index + 1)
+                .take_while(|(_, e)| !matches!(e, PathEl::MoveTo(_)))
+                .find(|(_, e)| matches!(e, PathEl::ClosePath))
+                .map(|(j, _)| j)
+        }
+        PathEl::ClosePath => None,
+        _ => Some(index),
+    }
+}
+
+/// The closing twin of the node at `index`: the last segment for a start,
+/// or the start for that last segment.
+fn twin_of(els: &[PathEl], index: usize) -> Option<usize> {
+    closing_twins(els).into_iter().find_map(|(a, b)| {
+        if a == index {
+            Some(b)
+        } else if b == index {
+            Some(a)
+        } else {
+            None
+        }
+    })
+}
+
+/// Elevate quadratics to cubics so every curve has two control points.
+pub fn normalize(path: &BezPath) -> BezPath {
+    let mut out = BezPath::new();
+    let mut last = Point::ZERO;
+    let mut start = Point::ZERO;
+    for el in path.elements() {
+        match *el {
+            PathEl::MoveTo(p) => {
+                out.move_to(p);
+                last = p;
+                start = p;
+            }
+            PathEl::LineTo(p) => {
+                out.line_to(p);
+                last = p;
+            }
+            PathEl::QuadTo(c, p) => {
+                let c1 = last + (c - last) * (2.0 / 3.0);
+                let c2 = p + (c - p) * (2.0 / 3.0);
+                out.curve_to(c1, c2, p);
+                last = p;
+            }
+            PathEl::CurveTo(c1, c2, p) => {
+                out.curve_to(c1, c2, p);
+                last = p;
+            }
+            PathEl::ClosePath => {
+                out.close_path();
+                last = start;
+            }
+        }
+    }
+    out
+}
+
+/// The nodes of `path`. The start of a closed subpath whose last segment
+/// ends on it is one node (that segment's end is not listed again); its
+/// incoming handle is the last segment's.
+pub fn nodes(path: &BezPath) -> Vec<Node> {
+    let els = path.elements();
+    let twins = closing_twins(els);
+    let mut out = Vec::new();
+    for (i, el) in els.iter().enumerate() {
+        if twins.iter().any(|&(_, last)| last == i) {
+            continue;
+        }
+        let (pos, mut ctrl_in, is_start) = match *el {
+            PathEl::MoveTo(p) => (p, None, true),
+            PathEl::LineTo(p) => (p, None, false),
+            PathEl::QuadTo(c, p) => (p, Some(c), false),
+            PathEl::CurveTo(_, c2, p) => (p, Some(c2), false),
+            PathEl::ClosePath => continue,
+        };
+        if let Some(&(_, last)) = twins.iter().find(|&&(start, _)| start == i) {
+            ctrl_in = match els[last] {
+                PathEl::CurveTo(_, c2, _) => Some(c2),
+                PathEl::QuadTo(c, _) => Some(c),
+                _ => None,
+            };
+        }
+        let ctrl_out = match els.get(i + 1) {
+            Some(PathEl::CurveTo(c1, _, _)) => Some(*c1),
+            Some(PathEl::QuadTo(c, _)) => Some(*c),
+            _ => None,
+        };
+        out.push(Node {
+            index: i,
+            pos,
+            ctrl_in,
+            ctrl_out,
+            is_start,
+        });
+    }
+    out
+}
+
+/// The type of node `index`: the one chosen for it in `chosen` (a curve's
+/// `Shape::node_types`) when the node exists, else as its handles read.
+pub fn node_type_with(
+    path: &BezPath,
+    index: usize,
+    chosen: &std::collections::BTreeMap<usize, NodeType>,
+) -> NodeType {
+    match chosen.get(&index) {
+        Some(t) if nodes(path).iter().any(|n| n.index == index) => *t,
+        _ => node_type(path, index),
+    }
+}
+
+/// [`node_type_with`] for a node already found by [`nodes`] (no search of
+/// the path: callers going over every node stay linear).
+pub fn node_type_of_with(
+    n: &Node,
+    chosen: &std::collections::BTreeMap<usize, NodeType>,
+) -> NodeType {
+    chosen
+        .get(&n.index)
+        .copied()
+        .unwrap_or_else(|| node_type_of(n))
+}
+
+/// The type of node `index` as its handles read: aligned handles are
+/// smooth, aligned ones of equal length symmetrical, the rest cusp.
+pub fn node_type(path: &BezPath, index: usize) -> NodeType {
+    match nodes(path).into_iter().find(|n| n.index == index) {
+        Some(n) => node_type_of(&n),
+        None => NodeType::Cusp,
+    }
+}
+
+/// The type a node's handles show (see [`node_type`]), for a node already
+/// found by [`nodes`]; a curve's nodes classified one by one this way are
+/// worked out once instead of once a node.
+pub fn node_type_of(n: &Node) -> NodeType {
+    let (Some(a), Some(b)) = (n.ctrl_in, n.ctrl_out) else {
+        return NodeType::Cusp;
+    };
+    let va = a - n.pos;
+    let vb = b - n.pos;
+    if va.hypot() < 1e-9 || vb.hypot() < 1e-9 {
+        return NodeType::Cusp;
+    }
+    let cross = va.cross(vb).abs() / (va.hypot() * vb.hypot());
+    let opposite = va.dot(vb) < 0.0;
+    if cross < 1e-3 && opposite {
+        if (va.hypot() - vb.hypot()).abs() < 1e-6 {
+            NodeType::Symmetrical
+        } else {
+            NodeType::Smooth
+        }
+    } else {
+        NodeType::Cusp
+    }
+}
+
+/// Move a node (and its two handles) by `d`.
+pub fn move_node(path: &BezPath, index: usize, d: Vec2) -> BezPath {
+    let mut els: Vec<PathEl> = normalize(path).elements().to_vec();
+    // Found before anything moves: the twin is the end lying on the start.
+    let twin = twin_of(&els, index);
+    if let Some(el) = els.get_mut(index) {
+        *el = match *el {
+            PathEl::MoveTo(p) => PathEl::MoveTo(p + d),
+            PathEl::LineTo(p) => PathEl::LineTo(p + d),
+            PathEl::CurveTo(c1, c2, p) => PathEl::CurveTo(c1, c2 + d, p + d),
+            other => other,
+        };
+    }
+    if let Some(PathEl::CurveTo(c1, _, _)) = els.get_mut(index + 1) {
+        *c1 += d;
+    }
+    // The start of a closed subpath and the end of its last segment are one
+    // node: the other half moves too, with its handle.
+    if let Some(t) = twin {
+        if let Some(el) = els.get_mut(t) {
+            *el = match *el {
+                PathEl::MoveTo(p) => PathEl::MoveTo(p + d),
+                PathEl::LineTo(p) => PathEl::LineTo(p + d),
+                PathEl::CurveTo(c1, c2, p) => PathEl::CurveTo(c1, c2 + d, p + d),
+                other => other,
+            };
+        }
+        if t < index {
+            // `t` is the start: its outgoing handle moves as well.
+            if let Some(PathEl::CurveTo(c1, _, _)) = els.get_mut(t + 1) {
+                *c1 += d;
+            }
+        }
+    }
+    BezPath::from_vec(els)
+}
+
+/// Move one control handle of a node, honouring the node type.
+pub fn move_handle(
+    path: &BezPath,
+    index: usize,
+    which: Which,
+    new_pos: Point,
+    ty: NodeType,
+) -> BezPath {
+    let mut els: Vec<PathEl> = normalize(path).elements().to_vec();
+    let node_pos = match els.get(index) {
+        Some(PathEl::MoveTo(p)) | Some(PathEl::LineTo(p)) | Some(PathEl::CurveTo(_, _, p)) => *p,
+        _ => return path.clone(),
+    };
+    // A closed subpath's start takes its incoming handle from the last
+    // segment, which ends on it.
+    let in_index = match els.get(index) {
+        Some(PathEl::MoveTo(_)) => twin_of(&els, index).unwrap_or(index),
+        _ => index,
+    };
+    let set_in = |els: &mut Vec<PathEl>, p: Point| {
+        if let Some(PathEl::CurveTo(_, c2, _)) = els.get_mut(in_index) {
+            *c2 = p;
+        }
+    };
+    let set_out = |els: &mut Vec<PathEl>, p: Point| {
+        if let Some(PathEl::CurveTo(c1, _, _)) = els.get_mut(index + 1) {
+            *c1 = p;
+        }
+    };
+    let other_len = |els: &[PathEl]| -> Option<f64> {
+        match which {
+            Which::In => match els.get(index + 1) {
+                Some(PathEl::CurveTo(c1, _, _)) => Some((*c1 - node_pos).hypot()),
+                _ => None,
+            },
+            Which::Out => match els.get(in_index) {
+                Some(PathEl::CurveTo(_, c2, _)) => Some((*c2 - node_pos).hypot()),
+                _ => None,
+            },
+        }
+    };
+    let dir = new_pos - node_pos;
+    match which {
+        Which::In => set_in(&mut els, new_pos),
+        Which::Out => set_out(&mut els, new_pos),
+    }
+    if ty != NodeType::Cusp && dir.hypot() > 1e-9 {
+        if let Some(len) = other_len(&els) {
+            let len = if ty == NodeType::Symmetrical {
+                dir.hypot()
+            } else {
+                len
+            };
+            let mirrored = node_pos - dir / dir.hypot() * len;
+            match which {
+                Which::In => set_out(&mut els, mirrored),
+                Which::Out => set_in(&mut els, mirrored),
+            }
+        }
+    }
+    BezPath::from_vec(els)
+}
+
+/// Make the node cusp/smooth/symmetrical by adjusting its handles. With a
+/// curve on both sides, the handles line up (and for symmetrical take
+/// one length). With a straight segment on one side, the curve's handle
+/// lines up with it, keeping its length, so the join is smooth and the
+/// line stays straight. With straight segments on both sides they become
+/// curves first (as To Curve makes them), then the node is smoothed; a
+/// closing line that is only a close stays straight. An end node of an
+/// open subpath has one side only and stays as it is.
+pub fn set_node_type(path: &BezPath, index: usize, ty: NodeType) -> BezPath {
+    let n = normalize(path);
+    let Some(node) = nodes(&n).into_iter().find(|n| n.index == index) else {
+        return n;
+    };
+    if ty == NodeType::Cusp {
+        return n;
+    }
+    let els = n.elements();
+    match (node.ctrl_in, node.ctrl_out) {
+        (Some(a), Some(b)) => {
+            let va = a - node.pos;
+            let vb = b - node.pos;
+            let dir = (va - vb).normalize();
+            if !dir.x.is_finite() {
+                return n;
+            }
+            let (la, lb) = if ty == NodeType::Symmetrical {
+                let l = (va.hypot() + vb.hypot()) / 2.0;
+                (l, l)
+            } else {
+                (va.hypot(), vb.hypot())
+            };
+            let n2 = move_handle(&n, index, Which::In, node.pos + dir * la, NodeType::Cusp);
+            move_handle(&n2, index, Which::Out, node.pos - dir * lb, NodeType::Cusp)
+        }
+        // Leaving on a straight segment: the arriving handle points back
+        // along it.
+        (Some(a), None) => {
+            let Some(dir) = line_out_point(els, index).and_then(|q| unit(q - node.pos)) else {
+                return n;
+            };
+            let len = (a - node.pos).hypot();
+            move_handle(&n, index, Which::In, node.pos - dir * len, NodeType::Cusp)
+        }
+        // Arriving on a straight segment: the leaving handle carries on
+        // along it.
+        (None, Some(b)) => {
+            let Some(dir) = line_in_point(els, index).and_then(|p| unit(node.pos - p)) else {
+                return n;
+            };
+            let len = (b - node.pos).hypot();
+            move_handle(&n, index, Which::Out, node.pos + dir * len, NodeType::Cusp)
+        }
+        (None, None) => {
+            // An end node of an open subpath has one side only.
+            let has_out = matches!(
+                els.get(index + 1),
+                Some(PathEl::LineTo(_) | PathEl::CurveTo(..) | PathEl::ClosePath)
+            );
+            if !has_out || line_in_point(els, index).is_none() {
+                return n;
+            }
+            let mut m = n.clone();
+            let mut curved = false;
+            let in_index = match els.get(index) {
+                Some(PathEl::MoveTo(_)) => twin_of(els, index),
+                _ => Some(index),
+            };
+            if let Some(i) = in_index.filter(|i| matches!(els.get(*i), Some(PathEl::LineTo(_)))) {
+                m = to_curve(&m, i);
+                curved = true;
+            }
+            if matches!(els.get(index + 1), Some(PathEl::LineTo(_))) {
+                m = to_curve(&m, index + 1);
+                curved = true;
+            }
+            if curved {
+                set_node_type(&m, index, ty)
+            } else {
+                n
+            }
+        }
+    }
+}
+
+/// Where the straight segment leaving node `index` goes: a line's end, or
+/// the subpath's start for a closing line.
+fn line_out_point(els: &[PathEl], index: usize) -> Option<Point> {
+    match els.get(index + 1)? {
+        PathEl::LineTo(q) => Some(*q),
+        PathEl::ClosePath => Some(subpath_start(els, index)),
+        _ => None,
+    }
+}
+
+/// Where the straight segment arriving at node `index` comes from; for a
+/// closed subpath's start, the last segment's start, or the last point
+/// when a closing line arrives.
+fn line_in_point(els: &[PathEl], index: usize) -> Option<Point> {
+    match els.get(index)? {
+        PathEl::MoveTo(_) => {
+            if let Some(t) = twin_of(els, index) {
+                return Some(prev_point(els, t));
+            }
+            let mut j = index + 1;
+            while let Some(e) = els.get(j) {
+                match e {
+                    PathEl::MoveTo(_) => return None,
+                    PathEl::ClosePath => return end_point(els.get(j - 1)?),
+                    _ => j += 1,
+                }
+            }
+            None
+        }
+        _ => Some(prev_point(els, index)),
+    }
+}
+
+/// Delete a node; the neighbouring segments are joined.
+/// The cubic that element `el`, starting at `start`, draws. Lines are raised
+/// to cubics with evenly spaced control points; only segments that carry a
+/// point come back.
+fn element_cubic(start: Point, el: PathEl) -> Option<kurbo::CubicBez> {
+    use kurbo::CubicBez;
+    match el {
+        PathEl::LineTo(p) => Some(CubicBez::new(
+            start,
+            start.lerp(p, 1.0 / 3.0),
+            start.lerp(p, 2.0 / 3.0),
+            p,
+        )),
+        PathEl::CurveTo(c1, c2, p) => Some(CubicBez::new(start, c1, c2, p)),
+        _ => None,
+    }
+}
+
+/// A unit vector, or `None` when the input is too short to have a direction.
+fn unit(v: Vec2) -> Option<Vec2> {
+    let len = v.hypot();
+    (len > 1e-9).then(|| v / len)
+}
+
+/// Fit one cubic from `p0` to `p3` to the ordered sample points `pts`,
+/// holding the end tangents `t1` (unit, leaving `p0`) and `t2` (unit,
+/// leaving `p3` back along the curve). The control points come out as
+/// `p0 + a1 * t1` and `p3 + a2 * t2`, the two lengths from a least-squares
+/// fit with fixed endpoints and tangents (Graphics Gems). A degenerate fit
+/// falls back to a third of the chord.
+fn fit_cubic(p0: Point, p3: Point, t1: Vec2, t2: Vec2, pts: &[Point]) -> (Point, Point) {
+    use kurbo::ParamCurveNearest;
+    let fallback = ((p3 - p0).hypot() / 3.0).max(1e-6);
+    if pts.len() < 2 {
+        return (p0 + t1 * fallback, p3 + t2 * fallback);
+    }
+    // Chord-length parameters in [0, 1].
+    let mut u = Vec::with_capacity(pts.len());
+    let mut acc = 0.0;
+    u.push(0.0);
+    for w in pts.windows(2) {
+        acc += (w[1] - w[0]).hypot();
+        u.push(acc);
+    }
+    if acc <= 1e-9 {
+        return (p0 + t1 * fallback, p3 + t2 * fallback);
+    }
+    for x in u.iter_mut() {
+        *x /= acc;
+    }
+    // Solve for the two handle lengths, then reparameterize the samples onto
+    // the fitted curve and solve again: a couple of passes pull the fit close
+    // to the samples where plain chord length is off.
+    let mut handles = (p0 + t1 * fallback, p3 + t2 * fallback);
+    for pass in 0..3 {
+        let (mut c00, mut c01, mut c11, mut x0, mut x1) = (0.0, 0.0, 0.0, 0.0, 0.0);
+        for (pt, &ui) in pts.iter().zip(u.iter()) {
+            let b1 = 3.0 * ui * (1.0 - ui).powi(2);
+            let b2 = 3.0 * ui * ui * (1.0 - ui);
+            let a0 = t1 * b1;
+            let a1 = t2 * b2;
+            c00 += a0.dot(a0);
+            c01 += a0.dot(a1);
+            c11 += a1.dot(a1);
+            // The curve with both control points pinned to the endpoints,
+            // which the two handle lengths then correct towards the samples.
+            let b03 = (1.0 - ui).powi(3) + b1;
+            let b23 = b2 + ui.powi(3);
+            let base = p0.to_vec2() * b03 + p3.to_vec2() * b23;
+            let tmp = pt.to_vec2() - base;
+            x0 += a0.dot(tmp);
+            x1 += a1.dot(tmp);
+        }
+        let det = c00 * c11 - c01 * c01;
+        let (mut a1, mut a2) = if det.abs() < 1e-12 {
+            (fallback, fallback)
+        } else {
+            ((x0 * c11 - c01 * x1) / det, (c00 * x1 - x0 * c01) / det)
+        };
+        if !(a1.is_finite() && a1 > 1e-6) {
+            a1 = fallback;
+        }
+        if !(a2.is_finite() && a2 > 1e-6) {
+            a2 = fallback;
+        }
+        handles = (p0 + t1 * a1, p3 + t2 * a2);
+        if pass == 2 {
+            break;
+        }
+        // Reparameterize: move each u towards the nearest point on the fit.
+        let cubic = kurbo::CubicBez::new(p0, handles.0, handles.1, p3);
+        for (pt, ui) in pts.iter().zip(u.iter_mut()) {
+            *ui = cubic.nearest(*pt, 1e-6).t;
+        }
+    }
+    handles
+}
+
+/// Sample `cubic` at `n` parameters, skipping `t = 0` when `skip_start` so a
+/// shared join is not sampled twice.
+fn sample_cubic(cubic: kurbo::CubicBez, n: usize, skip_start: bool, out: &mut Vec<Point>) {
+    use kurbo::ParamCurve;
+    let start = if skip_start { 1 } else { 0 };
+    for i in start..=n {
+        out.push(cubic.eval(i as f64 / n as f64));
+    }
+}
+
+/// The one segment that takes the place of `seg_a` (from `a` to a node B)
+/// and `seg_b` (from B on) when B is deleted: a cubic from `a` to
+/// `seg_b`'s end refitted to the old A-B-C shape when either is a curve,
+/// keeping the outer tangents, so the curve is kept instead of collapsing
+/// to the far handles. `None` for two lines (a straight join).
+fn joined_segment(a: Point, seg_a: PathEl, seg_b: PathEl) -> Option<PathEl> {
+    if matches!((seg_a, seg_b), (PathEl::LineTo(_), PathEl::LineTo(_))) {
+        return None;
+    }
+    let b = end_point(&seg_a)?;
+    let ca = element_cubic(a, seg_a)?;
+    let cb = element_cubic(b, seg_b)?;
+    let c = cb.p3;
+    let t1 = unit(ca.p1 - ca.p0)
+        .or_else(|| unit(ca.p2 - ca.p0))
+        .or_else(|| unit(ca.p3 - ca.p0))
+        .or_else(|| unit(c - a))
+        .unwrap_or(Vec2::new(1.0, 0.0));
+    let t2 = unit(cb.p2 - cb.p3)
+        .or_else(|| unit(cb.p1 - cb.p3))
+        .or_else(|| unit(cb.p0 - cb.p3))
+        .or_else(|| unit(a - c))
+        .unwrap_or(Vec2::new(-1.0, 0.0));
+    let mut pts = Vec::new();
+    sample_cubic(ca, 8, false, &mut pts);
+    sample_cubic(cb, 8, true, &mut pts);
+    let (h1, h2) = fit_cubic(a, c, t1, t2, &pts);
+    Some(PathEl::CurveTo(h1, h2, c))
+}
+
+pub fn delete_node(path: &BezPath, index: usize) -> BezPath {
+    let mut els: Vec<PathEl> = normalize(path).elements().to_vec();
+    if index >= els.len() {
+        return path.clone();
+    }
+    match els[index] {
+        PathEl::MoveTo(_) if twin_of(&els, index).is_some_and(|t| t > index + 1) => {
+            // A closed subpath's start: the next node becomes the start and
+            // the last segment runs on to it, refitted over the two old
+            // segments as for any other node, so the shape is kept (#472).
+            let last = twin_of(&els, index).unwrap_or(index);
+            let first = els[index + 1];
+            let next = match first {
+                PathEl::LineTo(p) | PathEl::CurveTo(_, _, p) | PathEl::QuadTo(_, p) => p,
+                _ => return path.clone(),
+            };
+            let from = prev_point(&els, last);
+            els[last] = joined_segment(from, els[last], first).unwrap_or(PathEl::LineTo(next));
+            els[index + 1] = PathEl::MoveTo(next);
+            els.remove(index);
+        }
+        PathEl::MoveTo(_) => {
+            // Promote the next element to the subpath start.
+            if let Some(next) = els.get(index + 1).copied() {
+                let p = match next {
+                    PathEl::LineTo(p) | PathEl::CurveTo(_, _, p) | PathEl::QuadTo(_, p) => p,
+                    _ => return path.clone(),
+                };
+                els[index + 1] = PathEl::MoveTo(p);
+                els.remove(index);
+            }
+        }
+        PathEl::LineTo(_) | PathEl::CurveTo(..) | PathEl::QuadTo(..) => {
+            // The node to delete (B) ends segment `index` (A to B); segment
+            // `index + 1` (B to C) carries on: the two become one.
+            let seg_a = els[index];
+            let a = prev_point(&els, index);
+            let joined = els
+                .get(index + 1)
+                .copied()
+                .and_then(|nx| joined_segment(a, seg_a, nx));
+            if let Some(seg) = joined {
+                els[index + 1] = seg;
+                els.remove(index);
+            } else {
+                // Two lines, or no following segment: drop the node and keep
+                // a straight join, carrying the next curve's end handle.
+                let removed = els.remove(index);
+                if let (PathEl::CurveTo(c1, _, _), Some(PathEl::CurveTo(_, c2, p))) =
+                    (removed, els.get(index).copied())
+                {
+                    els[index] = PathEl::CurveTo(c1, c2, p);
+                }
+            }
+        }
+        PathEl::ClosePath => {}
+    }
+    BezPath::from_vec(els)
+}
+
+/// Delete the nodes `indices` together. Two or more neighbouring nodes
+/// going at once become one curve between the nodes either side, fitted
+/// to the old segments, so the outline keeps its general shape even when
+/// every segment was a line (#675). A lone node goes as [`delete_node`]
+/// takes it. One pass over the path, however many nodes go.
+pub fn delete_nodes(path: &BezPath, indices: &[usize]) -> BezPath {
+    let els: Vec<PathEl> = normalize(path).elements().to_vec();
+    let gone: std::collections::HashSet<usize> = indices.iter().copied().collect();
+    let mut out = BezPath::new();
+    for sub in split_segments(path) {
+        let (nodes, implicit_close) = ring(&sub, &els);
+        let deleted: Vec<bool> = nodes.iter().map(|n| gone.contains(&n.0)).collect();
+        rebuild_without(&nodes, sub.closed, implicit_close, &deleted, &mut out);
+    }
+    out
+}
+
+/// A subpath's nodes in order, each with its index, place and the segment
+/// arriving at it (a closed subpath's start: its closing segment), and
+/// whether that closing segment is the ClosePath's own line.
+type Ring = (Vec<(usize, Point, Option<PathEl>)>, bool);
+
+fn ring(sub: &Segs, els: &[PathEl]) -> Ring {
+    let mut nodes: Vec<(usize, Point, Option<PathEl>)> = vec![(sub.start_index, sub.start, None)];
+    let mut implicit_close = false;
+    for &(el, _, to, own) in &sub.segs {
+        if sub.closed && to == sub.start_index {
+            nodes[0].2 = Some(el);
+            implicit_close = matches!(els.get(own), Some(PathEl::ClosePath));
+        } else {
+            nodes.push((to, seg_end(&el), Some(el)));
+        }
+    }
+    (nodes, implicit_close)
+}
+
+/// Append the subpath `nodes` without those `deleted` marks to `out` (see
+/// [`delete_nodes`]). A closed subpath left with one node is that node
+/// alone, an open one with fewer than two goes.
+fn rebuild_without(
+    nodes: &[(usize, Point, Option<PathEl>)],
+    closed: bool,
+    implicit_close: bool,
+    deleted: &[bool],
+    out: &mut BezPath,
+) {
+    let n = nodes.len();
+    let kept: Vec<usize> = (0..n).filter(|&k| !deleted[k]).collect();
+    let Some(&first) = kept.first() else {
+        return;
+    };
+    if kept.len() < 2 {
+        if closed {
+            out.move_to(nodes[first].1);
+            out.close_path();
+        }
+        return;
+    }
+    out.move_to(nodes[first].1);
+    let mut ends: Vec<usize> = kept[1..].to_vec();
+    if closed {
+        ends.push(first);
+    }
+    // The segment leaving node `k` (none past an open subpath's end).
+    let leaving = |k: usize| -> Option<PathEl> {
+        if closed {
+            nodes[(k + 1) % n].2
+        } else {
+            nodes.get(k + 1).and_then(|x| x.2)
+        }
+    };
+    let mut a = first;
+    for (i, &c) in ends.iter().enumerate() {
+        // The segments from kept node `a` to the next kept one.
+        let mut segs = Vec::new();
+        let mut k = a;
+        loop {
+            k = (k + 1) % n;
+            if let Some(el) = nodes[k].2 {
+                segs.push(el);
+            }
+            if k == c {
+                break;
+            }
+        }
+        let start = nodes[a].1;
+        let end = nodes[c].1;
+        let el = match segs.as_slice() {
+            [one] => *one,
+            [seg_a, seg_b] => joined_segment(start, *seg_a, *seg_b).unwrap_or(PathEl::LineTo(end)),
+            _ => {
+                // The kept nodes' sides outside the run: a curve there (or
+                // in the run's end segment) holds the tangent, so a smooth
+                // node stays smooth; between lines the handle is free.
+                let hold_start = !is_line(segs.first()) || !is_line(nodes[a].2.as_ref());
+                let hold_end = !is_line(segs.last()) || !is_line(leaving(c).as_ref());
+                fitted_run(start, &segs, hold_start, hold_end).unwrap_or(PathEl::LineTo(end))
+            }
+        };
+        let closing = closed && i + 1 == ends.len();
+        let untouched = first == 0 && segs.len() == 1;
+        // A closing line is the ClosePath's own, unless it was drawn
+        // as an element and is left as it was.
+        let skip = closing && matches!(el, PathEl::LineTo(_)) && (implicit_close || !untouched);
+        if !skip {
+            out.push(el);
+        }
+        a = c;
+    }
+    if closed {
+        out.close_path();
+    }
+}
+
+/// Whether `el` is a straight segment, or no segment (an open end).
+fn is_line(el: Option<&PathEl>) -> bool {
+    matches!(el, None | Some(PathEl::LineTo(_)))
+}
+
+/// One cubic from `a` through the segments `segs` (lines or cubics, each
+/// from the end of the one before), fitted to their shape by least
+/// squares. An end `hold_start` / `hold_end` keeps the old tangent there
+/// (only the handle's length is fitted); a free end's handle is fitted in
+/// both directions, so the deleted nodes' corner or bump is kept as a
+/// curve even between two ends whose lines ran the same way.
+fn fitted_run(a: Point, segs: &[PathEl], hold_start: bool, hold_end: bool) -> Option<PathEl> {
+    use kurbo::ParamCurveNearest;
+    let mut cubics = Vec::with_capacity(segs.len());
+    let mut from = a;
+    for el in segs {
+        let c = element_cubic(from, *el)?;
+        from = c.p3;
+        cubics.push(c);
+    }
+    let end = from;
+    let (first, last) = (cubics.first()?, cubics.last()?);
+    let t1 = unit(first.p1 - first.p0)
+        .or_else(|| unit(first.p2 - first.p0))
+        .or_else(|| unit(first.p3 - first.p0))
+        .or_else(|| unit(end - a))
+        .unwrap_or(Vec2::new(1.0, 0.0));
+    let t2 = unit(last.p2 - last.p3)
+        .or_else(|| unit(last.p1 - last.p3))
+        .or_else(|| unit(last.p0 - last.p3))
+        .or_else(|| unit(a - end))
+        .unwrap_or(Vec2::new(-1.0, 0.0));
+    let mut pts = Vec::new();
+    for (k, c) in cubics.iter().enumerate() {
+        sample_cubic(*c, 8, k > 0, &mut pts);
+    }
+    if hold_start && hold_end {
+        let (h1, h2) = fit_cubic(a, end, t1, t2, &pts);
+        return Some(PathEl::CurveTo(h1, h2, end));
+    }
+    // Chord-length parameters, then a couple of passes moving each onto
+    // the nearest point of the fit.
+    let mut u = Vec::with_capacity(pts.len());
+    let mut acc = 0.0;
+    for (k, p) in pts.iter().enumerate() {
+        if k > 0 {
+            acc += (*p - pts[k - 1]).hypot();
+        }
+        u.push(acc);
+    }
+    if acc <= 1e-9 {
+        return None;
+    }
+    for x in u.iter_mut() {
+        *x /= acc;
+    }
+    // The unknowns: a length along the tangent for a held end, both
+    // coordinates for a free one.
+    let mut handles = (a.lerp(end, 1.0 / 3.0), a.lerp(end, 2.0 / 3.0));
+    for pass in 0..3 {
+        let mut ata = [[0.0f64; 4]; 4];
+        let mut atb = [0.0f64; 4];
+        let mut size = 0;
+        for (pt, &t) in pts.iter().zip(u.iter()) {
+            let s = 1.0 - t;
+            let (b0, b1, b2, b3) = (s * s * s, 3.0 * t * s * s, 3.0 * t * t * s, t * t * t);
+            let mut r = pt.to_vec2() - a.to_vec2() * b0 - end.to_vec2() * b3;
+            // Each unknown's column: its 2D effect on this sample.
+            let mut cols: Vec<Vec2> = Vec::with_capacity(4);
+            if hold_start {
+                r -= a.to_vec2() * b1;
+                cols.push(t1 * b1);
+            } else {
+                cols.push(Vec2::new(b1, 0.0));
+                cols.push(Vec2::new(0.0, b1));
+            }
+            if hold_end {
+                r -= end.to_vec2() * b2;
+                cols.push(t2 * b2);
+            } else {
+                cols.push(Vec2::new(b2, 0.0));
+                cols.push(Vec2::new(0.0, b2));
+            }
+            size = cols.len();
+            for i in 0..size {
+                for j in 0..size {
+                    ata[i][j] += cols[i].dot(cols[j]);
+                }
+                atb[i] += cols[i].dot(r);
+            }
+        }
+        let Some(x) = solve_small(&ata, &atb, size) else {
+            break;
+        };
+        let (h1, rest) = if hold_start {
+            (a + t1 * x[0].max(1e-6), 1)
+        } else {
+            (Point::new(x[0], x[1]), 2)
+        };
+        let h2 = if hold_end {
+            end + t2 * x[rest].max(1e-6)
+        } else {
+            Point::new(x[rest], x[rest + 1])
+        };
+        if !(h1.x.is_finite() && h1.y.is_finite() && h2.x.is_finite() && h2.y.is_finite()) {
+            break;
+        }
+        handles = (h1, h2);
+        if pass == 2 {
+            break;
+        }
+        let cubic = kurbo::CubicBez::new(a, handles.0, handles.1, end);
+        for (pt, t) in pts.iter().zip(u.iter_mut()) {
+            *t = cubic.nearest(*pt, 1e-6).t;
+        }
+    }
+    Some(PathEl::CurveTo(handles.0, handles.1, end))
+}
+
+/// Solve the `n` by `n` system `m x = v` (n at most 4) by Gaussian
+/// elimination with partial pivoting; `None` when it is singular.
+fn solve_small(m: &[[f64; 4]; 4], v: &[f64; 4], n: usize) -> Option<[f64; 4]> {
+    let mut a = *m;
+    let mut b = *v;
+    for col in 0..n {
+        let pivot = (col..n).max_by(|&i, &j| a[i][col].abs().total_cmp(&a[j][col].abs()))?;
+        if a[pivot][col].abs() < 1e-12 {
+            return None;
+        }
+        a.swap(col, pivot);
+        b.swap(col, pivot);
+        let (top, below) = a.split_at_mut(col + 1);
+        let row = &top[col];
+        for (r, other) in below.iter_mut().take(n - col - 1).enumerate() {
+            let f = other[col] / row[col];
+            for (x, y) in other.iter_mut().zip(row.iter()).take(n).skip(col) {
+                *x -= f * y;
+            }
+            b[col + 1 + r] -= f * b[col];
+        }
+    }
+    let mut x = [0.0f64; 4];
+    for r in (0..n).rev() {
+        let acc: f64 = (r + 1..n).fold(b[r], |acc, k| acc - a[r][k] * x[k]);
+        x[r] = acc / a[r][r];
+    }
+    Some(x)
+}
+
+/// Split the segment ending at `index` at parameter `t`, inserting a node.
+pub fn add_node(path: &BezPath, index: usize, t: f64) -> BezPath {
+    let n = normalize(path);
+    let els = n.elements();
+    let Some(el) = els.get(index).copied() else {
+        return n;
+    };
+    let prev = prev_point(els, index);
+    let t = t.clamp(0.01, 0.99);
+    let mut out: Vec<PathEl> = els[..index].to_vec();
+    match el {
+        PathEl::LineTo(p) => {
+            out.push(PathEl::LineTo(prev.lerp(p, t)));
+            out.push(PathEl::LineTo(p));
+        }
+        PathEl::CurveTo(c1, c2, p) => {
+            // De Casteljau split.
+            let p01 = prev.lerp(c1, t);
+            let p12 = c1.lerp(c2, t);
+            let p23 = c2.lerp(p, t);
+            let p012 = p01.lerp(p12, t);
+            let p123 = p12.lerp(p23, t);
+            let mid = p012.lerp(p123, t);
+            out.push(PathEl::CurveTo(p01, p012, mid));
+            out.push(PathEl::CurveTo(p123, p23, p));
+        }
+        PathEl::ClosePath => {
+            let start = subpath_start(els, index);
+            out.push(PathEl::LineTo(prev.lerp(start, t)));
+            out.push(PathEl::ClosePath);
+        }
+        other => out.push(other),
+    }
+    out.extend_from_slice(&els[index + 1..]);
+    BezPath::from_vec(out)
+}
+
+/// Bend the segment ending at element `index` so that its point at
+/// parameter `t` moves by `d`, its end nodes staying put: a straight
+/// segment (or a closing one) becomes a curve first; both control points
+/// move, the nearer one more (by `k (1 - t) d` and `k t d`, `k` making the
+/// point follow `d` exactly); an end node that was smooth or symmetrical
+/// stays so (its other handle turns along). Paths whose segment cannot be
+/// bent come back unchanged.
+pub fn bend_segment(path: &BezPath, index: usize, t: f64, d: Vec2) -> BezPath {
+    bend_segment_with(path, index, t, d, &std::collections::BTreeMap::new())
+}
+
+/// [`bend_segment`] with the node types the user chose (see
+/// [`node_type_with`]): a node chosen cusp keeps its other handle where it
+/// is even when its handles happen to line up (#1140).
+pub fn bend_segment_with(
+    path: &BezPath,
+    index: usize,
+    t: f64,
+    d: Vec2,
+    chosen: &std::collections::BTreeMap<usize, NodeType>,
+) -> BezPath {
+    let n = normalize(path);
+    let mut els: Vec<PathEl> = n.elements().to_vec();
+    if !(d.x.is_finite() && d.y.is_finite()) || index == 0 || index >= els.len() {
+        return n;
+    }
+    let types_before = (
+        node_type_with(&n, index - 1, chosen),
+        node_type_with(&n, index, chosen),
+    );
+    let prev = prev_point(&els, index);
+    // The node the segment ends at: itself, or for a closing segment the
+    // subpath's start.
+    let mut end_node = index;
+    match els[index] {
+        PathEl::LineTo(p) => {
+            els[index] = PathEl::CurveTo(prev.lerp(p, 1.0 / 3.0), prev.lerp(p, 2.0 / 3.0), p);
+        }
+        PathEl::CurveTo(..) => {}
+        PathEl::ClosePath => {
+            let start = subpath_start(&els, index);
+            if (start - prev).hypot() < 1e-9 {
+                return n;
+            }
+            els.insert(
+                index,
+                PathEl::CurveTo(
+                    prev.lerp(start, 1.0 / 3.0),
+                    prev.lerp(start, 2.0 / 3.0),
+                    start,
+                ),
+            );
+            end_node = (0..index)
+                .rev()
+                .find(|&i| matches!(els[i], PathEl::MoveTo(_)))
+                .unwrap_or(0);
+        }
+        _ => return n,
+    }
+    let PathEl::CurveTo(c1, c2, _) = els[index] else {
+        return n;
+    };
+    let t = t.clamp(0.02, 0.98);
+    let u = 1.0 - t;
+    let k = 1.0 / (3.0 * t * u * (u * u + t * t));
+    let (n1, n2) = (c1 + d * (k * u), c2 + d * (k * t));
+    let bent = BezPath::from_vec(els);
+    // Through move_handle so smooth and symmetrical ends stay so (the
+    // types as they were before the segment became a curve).
+    let start_type = types_before.0;
+    let end_type = if end_node == index {
+        types_before.1
+    } else {
+        node_type_with(&n, end_node, chosen)
+    };
+    let bent = move_handle(&bent, index - 1, Which::Out, n1, start_type);
+    move_handle(&bent, end_node, Which::In, n2, end_type)
+}
+
+/// The element drawing the segment that To Line and To Curve act on for
+/// `index`: a node's own element; for the start of a closed subpath its
+/// closing segment ([`segment_into`]); for a `ClosePath` that draws no
+/// line (the segment before it ends on the start) that segment.
+fn segment_element(n: &BezPath, index: usize) -> usize {
+    let els = n.elements();
+    match els.get(index) {
+        Some(PathEl::MoveTo(_)) => segment_into(n, index).unwrap_or(index),
+        Some(PathEl::ClosePath)
+            if index > 0 && (prev_point(els, index) - subpath_start(els, index)).hypot() < 1e-9 =>
+        {
+            index - 1
+        }
+        _ => index,
+    }
+}
+
+/// Turn the segment ending at node `index` into a straight line. For the
+/// start of a closed subpath that is its closing segment, the last one
+/// back onto the start (#1618); a `ClosePath` index (a clicked closing
+/// line) is a line already.
+pub fn to_line(path: &BezPath, index: usize) -> BezPath {
+    let n = normalize(path);
+    let mut els: Vec<PathEl> = n.elements().to_vec();
+    let index = segment_element(&n, index);
+    if let Some(PathEl::CurveTo(_, _, p)) = els.get(index).copied() {
+        els[index] = PathEl::LineTo(p);
+    }
+    BezPath::from_vec(els)
+}
+
+/// Turn the segment ending at node `index` into a curve with handles at
+/// thirds. For the start of a closed subpath that is its closing segment
+/// (#1618): the last segment back onto the start, or the closing line the
+/// `ClosePath` draws, which becomes a curve of its own before the close
+/// (also when `index` is that `ClosePath`, as a click on the closing line
+/// chooses it).
+pub fn to_curve(path: &BezPath, index: usize) -> BezPath {
+    let n = normalize(path);
+    let mut els: Vec<PathEl> = n.elements().to_vec();
+    let index = segment_element(&n, index);
+    match els.get(index).copied() {
+        Some(PathEl::LineTo(p)) => {
+            let prev = prev_point(&els, index);
+            els[index] = PathEl::CurveTo(prev.lerp(p, 1.0 / 3.0), prev.lerp(p, 2.0 / 3.0), p);
+        }
+        Some(PathEl::ClosePath) => {
+            let prev = prev_point(&els, index);
+            let start = subpath_start(&els, index);
+            if (start - prev).hypot() > 1e-9 {
+                els.insert(
+                    index,
+                    PathEl::CurveTo(
+                        prev.lerp(start, 1.0 / 3.0),
+                        prev.lerp(start, 2.0 / 3.0),
+                        start,
+                    ),
+                );
+            }
+        }
+        _ => {}
+    }
+    BezPath::from_vec(els)
+}
+
+/// Close the subpath containing `index` (adds a ClosePath if missing).
+pub fn close_subpath(path: &BezPath, index: usize) -> BezPath {
+    let mut els: Vec<PathEl> = normalize(path).elements().to_vec();
+    let mut end = index;
+    while end + 1 < els.len() && !matches!(els[end + 1], PathEl::MoveTo(_)) {
+        end += 1;
+    }
+    if !matches!(els[end], PathEl::ClosePath) {
+        els.insert(end + 1, PathEl::ClosePath);
+    }
+    BezPath::from_vec(els)
+}
+
+/// Break the path at a node: the node becomes the end of one subpath and
+/// the start of another. At the start of a closed subpath (or at its
+/// closing segment, `index` the `ClosePath` a click on the closing line
+/// chooses) the subpath opens there: its two ends stay where they are,
+/// and a closing line the `ClosePath` drew stays as a line of its own
+/// (#1618).
+pub fn break_at(path: &BezPath, index: usize) -> BezPath {
+    let mut els: Vec<PathEl> = normalize(path).elements().to_vec();
+    let start = match els.get(index) {
+        Some(PathEl::MoveTo(_)) => Some(index),
+        Some(PathEl::ClosePath) => (0..index)
+            .rev()
+            .find(|&i| matches!(els[i], PathEl::MoveTo(_))),
+        _ => None,
+    };
+    if let Some(start) = start {
+        let close = (start + 1..els.len())
+            .take_while(|&i| !matches!(els[i], PathEl::MoveTo(_)))
+            .find(|&i| matches!(els[i], PathEl::ClosePath));
+        let (Some(close), Some(PathEl::MoveTo(s))) = (close, els.get(start).copied()) else {
+            // The start of an open subpath: nothing to break.
+            return path.clone();
+        };
+        let prev = prev_point(&els, close);
+        if (prev - s).hypot() > 1e-9 {
+            els[close] = PathEl::LineTo(s);
+        } else {
+            els.remove(close);
+        }
+        return BezPath::from_vec(els);
+    }
+    let p = match els.get(index) {
+        Some(PathEl::LineTo(p)) | Some(PathEl::CurveTo(_, _, p)) => *p,
+        _ => return path.clone(),
+    };
+    // Remove a ClosePath for this subpath: breaking opens it.
+    let mut end = index;
+    while end + 1 < els.len() && !matches!(els[end + 1], PathEl::MoveTo(_)) {
+        end += 1;
+    }
+    if matches!(els[end], PathEl::ClosePath) {
+        els.remove(end);
+    }
+    els.insert(index + 1, PathEl::MoveTo(p));
+    BezPath::from_vec(els)
+}
+
+/// Reverse the direction of the whole path.
+/// Reduce nodes: drop nodes as long as the curve stays within `tolerance`
+/// of its original shape everywhere, not only where the dropped node was.
+/// The node whose removal moves the curve least goes first. The ends of an
+/// open subpath stay; the start of a closed one can go like any other
+/// node (the subpath then starts at the node before it).
+pub fn reduce_nodes(path: &BezPath, tolerance: f64) -> BezPath {
+    reduce_where(path, tolerance, |_| true)
+}
+
+/// Reduce nodes among `chosen` only (element indices of the normalized
+/// path, as `nodes` gives them): like `reduce_nodes`, but other nodes stay.
+pub fn reduce_chosen_nodes(path: &BezPath, chosen: &[usize], tolerance: f64) -> BezPath {
+    reduce_where(path, tolerance, |i| chosen.contains(&i))
+}
+
+/// One segment of a subpath being reduced: where it starts, the element
+/// drawing it, and the original outline it stands for, flattened (its
+/// start and end included).
+struct Span {
+    start: Point,
+    el: PathEl,
+    orig: Vec<Point>,
+}
+
+impl Span {
+    fn end(&self) -> Point {
+        end_point(&self.el).unwrap_or(self.start)
+    }
+}
+
+/// How far a reduced segment strays from the original outline: the
+/// farthest original point from the segment, and the farthest point of
+/// the segment from the original outline (so it cannot bulge out between
+/// the original points either).
+fn span_deviation(span: &Span) -> f64 {
+    deviation(span.start, span.el, &span.orig)
+}
+
+fn deviation(start: Point, el: PathEl, orig: &[Point]) -> f64 {
+    use kurbo::{Line, ParamCurve, ParamCurveNearest, PathSeg};
+    let seg = match el {
+        PathEl::LineTo(p) => PathSeg::Line(Line::new(start, p)),
+        el => match element_cubic(start, el) {
+            Some(c) => PathSeg::Cubic(c),
+            None => return f64::INFINITY,
+        },
+    };
+    let mut worst = 0.0f64;
+    for q in orig {
+        worst = worst.max(seg.nearest(*q, 1e-6).distance_sq.sqrt());
+    }
+    if orig.len() < 2 {
+        return worst;
+    }
+    for i in 1..32 {
+        let q = seg.eval(i as f64 / 32.0);
+        let d = orig
+            .windows(2)
+            .map(|w| Line::new(w[0], w[1]).nearest(q, 1e-9).distance_sq)
+            .fold(f64::INFINITY, f64::min);
+        worst = worst.max(d.sqrt());
+    }
+    worst
+}
+
+/// The deviation of a merged span, after improving its handle lengths
+/// (along its tangents) when the least-squares fit strays more than
+/// `tolerance`: a pattern search on the two lengths for the smallest
+/// deviation, stopping once it is within the tolerance. The fit's
+/// parameters come from chord lengths, which suit long, unevenly curved
+/// spans poorly.
+fn refine_span(span: &mut Span, tolerance: f64) -> f64 {
+    let mut best = span_deviation(span);
+    // Far off: the span needs a node in between, not other handles.
+    if best > 4.0 * tolerance {
+        return best;
+    }
+    let PathEl::CurveTo(h1, h2, p3) = span.el else {
+        return best;
+    };
+    let p0 = span.start;
+    let (Some(t1), Some(t2)) = (unit(h1 - p0), unit(h2 - p3)) else {
+        return best;
+    };
+    let el = |a: [f64; 2]| PathEl::CurveTo(p0 + t1 * a[0], p3 + t2 * a[1], p3);
+    let mut a = [(h1 - p0).hypot(), (h2 - p3).hypot()];
+    let mut step = (p3 - p0).hypot().max(a[0]).max(a[1]) / 4.0;
+    let min_step = (tolerance / 100.0).max(1e-6);
+    let mut evals = 0;
+    while best > tolerance && step > min_step && evals < 400 {
+        let mut improved = false;
+        for (i, dir) in [(0, 1.0), (0, -1.0), (1, 1.0), (1, -1.0)] {
+            let mut c = a;
+            c[i] = (c[i] + dir * step).max(0.0);
+            let d = deviation(p0, el(c), &span.orig);
+            evals += 1;
+            if d < best {
+                best = d;
+                a = c;
+                improved = true;
+            }
+        }
+        if !improved {
+            step /= 2.0;
+        }
+    }
+    span.el = el(a);
+    best
+}
+
+/// The one span that replaces the consecutive spans `run`: a line when
+/// they are all lines, otherwise a cubic keeping the outer tangents,
+/// fitted to their original outline.
+fn merge_run(run: &[&Span]) -> Option<Span> {
+    let (first, last) = (run.first()?, run.last()?);
+    let mut orig = first.orig.clone();
+    for s in &run[1..] {
+        orig.extend(s.orig.iter().skip(1).copied());
+    }
+    let a = first.start;
+    let c = last.end();
+    let el = if run.iter().all(|s| matches!(s.el, PathEl::LineTo(_))) {
+        PathEl::LineTo(c)
+    } else {
+        let ca = element_cubic(first.start, first.el)?;
+        let cb = element_cubic(last.start, last.el)?;
+        let t1 = unit(ca.p1 - ca.p0)
+            .or_else(|| unit(ca.p2 - ca.p0))
+            .or_else(|| unit(ca.p3 - ca.p0))
+            .or_else(|| unit(c - a))
+            .unwrap_or(Vec2::new(1.0, 0.0));
+        let t2 = unit(cb.p2 - cb.p3)
+            .or_else(|| unit(cb.p1 - cb.p3))
+            .or_else(|| unit(cb.p0 - cb.p3))
+            .or_else(|| unit(a - c))
+            .unwrap_or(Vec2::new(-1.0, 0.0));
+        let (h1, h2) = fit_cubic(a, c, t1, t2, &orig);
+        PathEl::CurveTo(h1, h2, c)
+    };
+    Some(Span { start: a, el, orig })
+}
+
+/// The points of segment `el` from `start`, flattened to within `flat`.
+fn flatten_element(start: Point, el: PathEl, flat: f64) -> Vec<Point> {
+    let mut out = vec![start];
+    if let PathEl::CurveTo(..) = el {
+        kurbo::flatten([PathEl::MoveTo(start), el], flat, |e| {
+            if let PathEl::LineTo(p) = e {
+                out.push(p);
+            }
+        });
+    }
+    if let Some(end) = end_point(&el) {
+        if out.last().is_none_or(|l| (*l - end).hypot() > 1e-12) {
+            out.push(end);
+        }
+    }
+    out
+}
+
+/// Drop removable nodes of one subpath's spans while the curve stays
+/// within `tolerance`. `ids[k]` is the node at the end of span `k` (for a
+/// closed subpath the last one is its start). True when a node went.
+///
+/// First top-down: the stretch between two nodes that stay becomes one
+/// segment, and when that strays too far, it is split at the original node
+/// farthest from it, again and again; this spreads the nodes that stay
+/// evenly. Then bottom-up: whichever single node can go with the least
+/// change goes, while one can.
+fn reduce_spans(
+    spans: &mut Vec<Span>,
+    ids: &mut Vec<usize>,
+    closed: bool,
+    tolerance: f64,
+    removable: &impl Fn(usize) -> bool,
+) -> bool {
+    let n = spans.len();
+    // A closed subpath keeps two segments, an open one its two ends.
+    let min = if closed { 2 } else { 1 };
+    if n <= min {
+        return false;
+    }
+    let pos = |k: usize| spans[k].end();
+    let mut keep: Vec<bool> = (0..n).map(|k| !removable(ids[k])).collect();
+    if !closed {
+        keep[n - 1] = true;
+    } else {
+        // Two nodes far apart to start from.
+        let fixed: Vec<usize> = (0..n).filter(|k| keep[*k]).collect();
+        let from = fixed.first().copied().unwrap_or(n - 1);
+        keep[from] = true;
+        if fixed.len() < 2 {
+            let far = (0..n)
+                .filter(|k| *k != from)
+                .max_by(|a, b| {
+                    let da = (pos(*a) - pos(from)).hypot();
+                    let db = (pos(*b) - pos(from)).hypot();
+                    da.total_cmp(&db)
+                })
+                .unwrap_or(from);
+            keep[far] = true;
+        }
+    }
+    // The runs of spans between the nodes that stay, split until each fits.
+    let kept: Vec<usize> = (0..n).filter(|k| keep[*k]).collect();
+    let mut stack: Vec<Vec<usize>> = Vec::new();
+    for (m, &end) in kept.iter().enumerate() {
+        let begin = if m == 0 {
+            if closed {
+                (kept.last().copied().unwrap_or(end) + 1) % n
+            } else {
+                0
+            }
+        } else {
+            kept[m - 1] + 1
+        };
+        let mut run = Vec::new();
+        let mut k = begin;
+        loop {
+            run.push(k);
+            if k == end || run.len() > n {
+                break;
+            }
+            k = (k + 1) % n;
+        }
+        stack.push(run);
+    }
+    while let Some(run) = stack.pop() {
+        if run.len() < 2 {
+            continue;
+        }
+        let parts: Vec<&Span> = run.iter().map(|k| &spans[*k]).collect();
+        let fits =
+            merge_run(&parts).is_some_and(|mut m| refine_span(&mut m, tolerance) <= tolerance);
+        if fits {
+            continue;
+        }
+        // Split at the inner node farthest from the one-segment fit, or at
+        // the one in the middle of the stretch, whichever leaves the two
+        // halves closer to the original.
+        let inner = &run[..run.len() - 1];
+        let farthest = merge_run(&parts).and_then(|m| {
+            inner.iter().copied().max_by(|a, b| {
+                let da = deviation(m.start, m.el, &[pos(*a)]);
+                let db = deviation(m.start, m.el, &[pos(*b)]);
+                da.total_cmp(&db)
+            })
+        });
+        let lengths: Vec<f64> = run
+            .iter()
+            .map(|k| {
+                spans[*k]
+                    .orig
+                    .windows(2)
+                    .map(|w| (w[1] - w[0]).hypot())
+                    .sum()
+            })
+            .collect();
+        let total: f64 = lengths.iter().sum();
+        let mut acc = 0.0;
+        let middle = inner
+            .iter()
+            .zip(&lengths)
+            .map(|(k, l)| {
+                acc += l;
+                (*k, (acc - total / 2.0).abs())
+            })
+            .min_by(|a, b| a.1.total_cmp(&b.1))
+            .map(|(k, _)| k);
+        let halves_off = |at: usize| -> f64 {
+            let i = run.iter().position(|k| *k == at).unwrap_or(0);
+            let off = |r: &[usize]| -> f64 {
+                if r.len() < 2 {
+                    return 0.0;
+                }
+                let p: Vec<&Span> = r.iter().map(|k| &spans[*k]).collect();
+                merge_run(&p).map_or(f64::INFINITY, |mut m| refine_span(&mut m, tolerance))
+            };
+            off(&run[..=i]).max(off(&run[i + 1..]))
+        };
+        let split = match (farthest, middle) {
+            (Some(f), Some(m)) if f != m => {
+                if halves_off(m) <= halves_off(f) {
+                    m
+                } else {
+                    f
+                }
+            }
+            (Some(f), _) => f,
+            (None, Some(m)) => m,
+            (None, None) => inner[inner.len() / 2],
+        };
+        keep[split] = true;
+        let at = run.iter().position(|k| *k == split).unwrap_or(0);
+        stack.push(run[..=at].to_vec());
+        stack.push(run[at + 1..].to_vec());
+    }
+    let mut any = keep.iter().any(|k| !k);
+    if any {
+        // Rebuild: one span per run, in order, a closed subpath starting
+        // after its last node that stays.
+        let kept: Vec<usize> = (0..n).filter(|k| keep[*k]).collect();
+        let mut new_spans = Vec::with_capacity(kept.len());
+        let mut new_ids = Vec::with_capacity(kept.len());
+        for (m, &end) in kept.iter().enumerate() {
+            let begin = if m == 0 {
+                if closed {
+                    (kept.last().copied().unwrap_or(end) + 1) % n
+                } else {
+                    0
+                }
+            } else {
+                kept[m - 1] + 1
+            };
+            let mut run: Vec<&Span> = Vec::new();
+            let mut k = begin;
+            loop {
+                run.push(&spans[k]);
+                if k == end || run.len() > n {
+                    break;
+                }
+                k = (k + 1) % n;
+            }
+            let merged = if run.len() == 1 {
+                None
+            } else {
+                merge_run(&run).map(|mut m| {
+                    refine_span(&mut m, tolerance);
+                    m
+                })
+            };
+            let span = match merged {
+                Some(m) => m,
+                None => Span {
+                    start: run[0].start,
+                    el: run[0].el,
+                    orig: run[0].orig.clone(),
+                },
+            };
+            new_spans.push(span);
+            new_ids.push(ids[end]);
+        }
+        *spans = new_spans;
+        *ids = new_ids;
+    }
+    any |= reduce_one_by_one(spans, ids, closed, tolerance, removable);
+    any
+}
+
+/// Drop single nodes, the one whose removal changes the curve least
+/// first, while one can go within `tolerance`.
+fn reduce_one_by_one(
+    spans: &mut Vec<Span>,
+    ids: &mut Vec<usize>,
+    closed: bool,
+    tolerance: f64,
+    removable: &impl Fn(usize) -> bool,
+) -> bool {
+    let min = if closed { 2 } else { 1 };
+    let candidate = |spans: &Vec<Span>, ids: &Vec<usize>, k: usize| -> Option<(f64, Span)> {
+        let n = spans.len();
+        if n <= min || (!closed && k + 1 >= n) || !removable(ids[k]) {
+            return None;
+        }
+        let mut m = merge_run(&[&spans[k], &spans[(k + 1) % n]])?;
+        let d = refine_span(&mut m, tolerance);
+        (d <= tolerance).then_some((d, m))
+    };
+    let mut costs: Vec<Option<(f64, Span)>> =
+        (0..spans.len()).map(|k| candidate(spans, ids, k)).collect();
+    let mut any = false;
+    loop {
+        let best = costs
+            .iter()
+            .enumerate()
+            .filter_map(|(k, c)| c.as_ref().map(|(d, _)| (k, *d)))
+            .min_by(|a, b| a.1.total_cmp(&b.1));
+        let Some((k, _)) = best else {
+            break;
+        };
+        let Some((_, merged)) = costs[k].take() else {
+            break;
+        };
+        // The span after node k becomes the merged one; span k and node k go.
+        let n = spans.len();
+        let next = (k + 1) % n;
+        spans[next] = merged;
+        spans.remove(k);
+        ids.remove(k);
+        costs.remove(k);
+        any = true;
+        let n = spans.len();
+        if n == 0 {
+            break;
+        }
+        // Only the nodes at either end of the merged span change.
+        let merged_at = if next > k { next - 1 } else { next };
+        let before = (merged_at + n - 1) % n;
+        for j in [before, merged_at] {
+            if j < n {
+                costs[j] = candidate(spans, ids, j);
+            }
+        }
+    }
+    any
+}
+
+fn reduce_where(path: &BezPath, tolerance: f64, removable: impl Fn(usize) -> bool) -> BezPath {
+    let norm = normalize(path);
+    let finite = norm.elements().iter().all(|e| match *e {
+        PathEl::MoveTo(p) | PathEl::LineTo(p) => p.is_finite(),
+        PathEl::QuadTo(c, p) => c.is_finite() && p.is_finite(),
+        PathEl::CurveTo(c1, c2, p) => c1.is_finite() && c2.is_finite() && p.is_finite(),
+        PathEl::ClosePath => true,
+    });
+    if !(tolerance > 0.0 && tolerance.is_finite() && finite) {
+        return norm;
+    }
+    // The original outline is kept to a tenth of the tolerance.
+    let flat = (tolerance / 10.0).max(1e-6);
+    let els = norm.elements();
+    let mut out = BezPath::new();
+    let mut changed = false;
+    let mut i = 0;
+    while i < els.len() {
+        let PathEl::MoveTo(p0) = els[i] else {
+            out.push(els[i]);
+            i += 1;
+            continue;
+        };
+        let start_index = i;
+        let mut spans: Vec<Span> = Vec::new();
+        let mut ids: Vec<usize> = Vec::new();
+        let mut last = p0;
+        let mut j = i + 1;
+        while let Some(el @ (PathEl::LineTo(_) | PathEl::CurveTo(..))) = els.get(j).copied() {
+            spans.push(Span {
+                start: last,
+                el,
+                orig: flatten_element(last, el, flat),
+            });
+            ids.push(j);
+            last = end_point(&el).unwrap_or(last);
+            j += 1;
+        }
+        let closed = matches!(els.get(j), Some(PathEl::ClosePath));
+        // A closing line drawn by the ClosePath itself.
+        let implicit = closed && !spans.is_empty() && (last - p0).hypot() >= 1e-9;
+        if implicit {
+            spans.push(Span {
+                start: last,
+                el: PathEl::LineTo(p0),
+                orig: vec![last, p0],
+            });
+            ids.push(j);
+        }
+        if closed {
+            // The last segment ends on the start: that node is the start.
+            if let Some(e) = ids.last_mut() {
+                *e = start_index;
+            }
+        }
+        changed |= reduce_spans(&mut spans, &mut ids, closed, tolerance, &removable);
+        out.move_to(spans.first().map_or(p0, |s| s.start));
+        let count = spans.len();
+        for (k, s) in spans.iter().enumerate() {
+            let closing_line = implicit
+                && k + 1 == count
+                && matches!(s.el, PathEl::LineTo(_))
+                && spans
+                    .first()
+                    .is_some_and(|f| (s.end() - f.start).hypot() < 1e-9);
+            if !closing_line {
+                out.push(s.el);
+            }
+        }
+        if closed {
+            out.close_path();
+            j += 1;
+        }
+        i = j;
+    }
+    if changed {
+        out
+    } else {
+        norm
+    }
+}
+
+/// Align the given nodes on a common x and/or y (their average).
+pub fn align_nodes(path: &BezPath, indices: &[usize], horizontal: bool, vertical: bool) -> BezPath {
+    let ns = nodes(path);
+    let sel: Vec<&Node> = ns.iter().filter(|n| indices.contains(&n.index)).collect();
+    if sel.len() < 2 {
+        return path.clone();
+    }
+    let cx = sel.iter().map(|n| n.pos.x).sum::<f64>() / sel.len() as f64;
+    let cy = sel.iter().map(|n| n.pos.y).sum::<f64>() / sel.len() as f64;
+    let mut out = path.clone();
+    for n in sel {
+        let target = Point::new(
+            if vertical { cx } else { n.pos.x },
+            if horizontal { cy } else { n.pos.y },
+        );
+        out = move_node(&out, n.index, target - n.pos);
+    }
+    out
+}
+
+pub fn reverse(path: &BezPath) -> BezPath {
+    let n = normalize(path);
+    let mut out = BezPath::new();
+    let mut subpaths: Vec<Vec<PathEl>> = Vec::new();
+    for el in n.elements() {
+        if let PathEl::MoveTo(_) = el {
+            subpaths.push(Vec::new());
+        }
+        if let Some(sp) = subpaths.last_mut() {
+            sp.push(*el);
+        }
+    }
+    for sp in subpaths {
+        let closed = matches!(sp.last(), Some(PathEl::ClosePath));
+        let pts: Vec<(Point, Option<(Point, Point)>)> = {
+            let mut v = Vec::new();
+            let mut last = Point::ZERO;
+            for el in &sp {
+                match *el {
+                    PathEl::MoveTo(p) => {
+                        v.push((p, None));
+                        last = p;
+                    }
+                    PathEl::LineTo(p) => {
+                        v.push((p, None));
+                        last = p;
+                    }
+                    PathEl::CurveTo(c1, c2, p) => {
+                        v.push((p, Some((c1, c2))));
+                        last = p;
+                    }
+                    _ => {}
+                }
+            }
+            let _ = last;
+            v
+        };
+        if pts.is_empty() {
+            continue;
+        }
+        out.move_to(pts[pts.len() - 1].0);
+        for i in (1..pts.len()).rev() {
+            let target = pts[i - 1].0;
+            match pts[i].1 {
+                Some((c1, c2)) => out.curve_to(c2, c1, target),
+                None => out.line_to(target),
+            }
+        }
+        if closed {
+            out.close_path();
+        }
+    }
+    out
+}
+
+/// Apply `t` to the given nodes and to their handles (a node's incoming
+/// handle and its outgoing one). The start node of a closed subpath whose
+/// last segment ends on it takes that end along.
+pub fn transform_nodes(path: &BezPath, indices: &[usize], t: crate::geometry::Affine) -> BezPath {
+    let mut els: Vec<PathEl> = normalize(path).elements().to_vec();
+    let mut chosen: Vec<usize> = indices.to_vec();
+    // A closed subpath's start node and a last segment ending on it are
+    // one node.
+    let mut start = 0;
+    for i in 0..els.len() {
+        match els[i] {
+            PathEl::MoveTo(_) => start = i,
+            PathEl::ClosePath if i > start + 1 => {
+                let (PathEl::MoveTo(s), Some(end)) = (els[start], end_point(&els[i - 1])) else {
+                    continue;
+                };
+                if (s - end).hypot() < 1e-9 {
+                    let (a, b) = (start, i - 1);
+                    if chosen.contains(&a) && !chosen.contains(&b) {
+                        chosen.push(b);
+                    } else if chosen.contains(&b) && !chosen.contains(&a) {
+                        chosen.push(a);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    let n = els.len();
+    for &i in &chosen {
+        if i >= n {
+            continue;
+        }
+        els[i] = match els[i] {
+            PathEl::MoveTo(p) => PathEl::MoveTo(t * p),
+            PathEl::LineTo(p) => PathEl::LineTo(t * p),
+            PathEl::CurveTo(c1, c2, p) => PathEl::CurveTo(c1, t * c2, t * p),
+            other => other,
+        };
+        if let Some(PathEl::CurveTo(c1, _, _)) = els.get_mut(i + 1) {
+            *c1 = t * *c1;
+        }
+    }
+    BezPath::from_vec(els)
+}
+
+fn end_point(el: &PathEl) -> Option<Point> {
+    match el {
+        PathEl::MoveTo(p) | PathEl::LineTo(p) | PathEl::CurveTo(_, _, p) | PathEl::QuadTo(_, p) => {
+            Some(*p)
+        }
+        PathEl::ClosePath => None,
+    }
+}
+
+/// A subpath as segments: each with the element that draws it (a line or
+/// curve to its end) and the node index at each end. A closing segment's
+/// end node is the subpath's start.
+/// A segment, its start and end nodes, and the element drawing it (its
+/// own index, or the `ClosePath` for a closing line).
+type Seg = (PathEl, usize, usize, usize);
+
+struct Segs {
+    start: Point,
+    start_index: usize,
+    segs: Vec<Seg>,
+    closed: bool,
+}
+
+fn split_segments(path: &BezPath) -> Vec<Segs> {
+    let n = normalize(path);
+    let mut out: Vec<Segs> = Vec::new();
+    let mut last_index = 0;
+    let mut last = Point::ZERO;
+    for (i, el) in n.elements().iter().enumerate() {
+        match *el {
+            PathEl::MoveTo(p) => {
+                out.push(Segs {
+                    start: p,
+                    start_index: i,
+                    segs: Vec::new(),
+                    closed: false,
+                });
+                last_index = i;
+                last = p;
+            }
+            PathEl::LineTo(p) | PathEl::CurveTo(_, _, p) => {
+                if let Some(s) = out.last_mut() {
+                    s.segs.push((*el, last_index, i, i));
+                }
+                last_index = i;
+                last = p;
+            }
+            PathEl::QuadTo(..) => {}
+            PathEl::ClosePath => {
+                if let Some(s) = out.last_mut() {
+                    if (last - s.start).hypot() > 1e-9 {
+                        s.segs
+                            .push((PathEl::LineTo(s.start), last_index, s.start_index, i));
+                    } else if let Some(seg) = s.segs.last_mut() {
+                        // The last segment ends on the start node.
+                        seg.2 = s.start_index;
+                    }
+                    s.closed = true;
+                }
+            }
+        }
+    }
+    out
+}
+
+fn seg_end(el: &PathEl) -> Point {
+    end_point(el).unwrap_or(Point::ZERO)
+}
+
+/// The segments whose two end nodes are both among `indices`, as open
+/// subpaths: what the Shape tool copies.
+pub fn selected_segments(path: &BezPath, indices: &[usize]) -> BezPath {
+    segments_where(path, |i| indices.contains(&i))
+}
+
+/// The segments whose two end nodes `keep` takes, as open subpaths (see
+/// [`selected_segments`]); one pass, for callers with many nodes.
+pub fn segments_where(path: &BezPath, keep: impl Fn(usize) -> bool) -> BezPath {
+    let mut out = BezPath::new();
+    for sub in split_segments(path) {
+        let mut at = sub.start;
+        let mut open = false;
+        let mut prev_end = usize::MAX;
+        for (el, from, to, _) in &sub.segs {
+            let picked = keep(*from) && keep(*to);
+            if picked {
+                if !open || prev_end != *from {
+                    out.move_to(at);
+                }
+                out.push(*el);
+                open = true;
+                prev_end = *to;
+            } else {
+                open = false;
+            }
+            at = seg_end(el);
+        }
+    }
+    out
+}
+
+/// The path without the segments `selected_segments` picks (the Shape
+/// tool's Cut): what is left becomes open subpaths.
+pub fn without_segments(path: &BezPath, indices: &[usize]) -> BezPath {
+    cut_segments(path, &|&(_, from, to, _)| {
+        indices.contains(&from) && indices.contains(&to)
+    })
+}
+
+/// The path without the one segment drawn by element `index` (a line, a
+/// curve, or the `ClosePath` of a closing line): an open subpath splits in
+/// two there (or loses an end), a closed one opens there. A path without
+/// that segment comes back unchanged.
+pub fn delete_segment(path: &BezPath, index: usize) -> BezPath {
+    let found = split_segments(path)
+        .iter()
+        .any(|sub| sub.segs.iter().any(|seg| seg.3 == index));
+    if !found {
+        return path.clone();
+    }
+    cut_segments(path, &|&(_, _, _, elem)| elem == index)
+}
+
+/// The path without the segments `picked` chooses; what is left of each
+/// touched subpath becomes open subpaths.
+fn cut_segments(path: &BezPath, picked: &dyn Fn(&Seg) -> bool) -> BezPath {
+    let mut out = BezPath::new();
+    for sub in split_segments(path) {
+        let n = sub.segs.len();
+        let first_cut = sub.segs.iter().position(picked);
+        let Some(first_cut) = first_cut else {
+            // Untouched.
+            out.move_to(sub.start);
+            for (el, _, _, _) in &sub.segs {
+                out.push(*el);
+            }
+            if sub.closed {
+                out.close_path();
+            }
+            continue;
+        };
+        // Walk the segments; a closed subpath starts right after a cut one.
+        let order: Vec<usize> = if sub.closed {
+            (1..=n).map(|k| (first_cut + k) % n).collect()
+        } else {
+            (0..n).collect()
+        };
+        let start_of = |k: usize| -> Point {
+            if k == 0 {
+                sub.start
+            } else {
+                seg_end(&sub.segs[k - 1].0)
+            }
+        };
+        let mut open = false;
+        for k in order {
+            let seg = &sub.segs[k];
+            if picked(seg) {
+                open = false;
+                continue;
+            }
+            if !open {
+                out.move_to(start_of(k));
+                open = true;
+            }
+            out.push(seg.0);
+        }
+    }
+    out
+}
+
+/// The nodes from `a` to `b` along their subpath, both included and in
+/// that order, and which way it went: `Some(true)` follows the path's
+/// direction (wrapping round a closed subpath), `Some(false)` goes against
+/// it, `None` takes the shorter way (on an open subpath, the only one).
+/// `None` when they lie on different subpaths or the way asked for runs
+/// off the end of an open one.
+pub fn node_run(
+    path: &BezPath,
+    a: usize,
+    b: usize,
+    forward: Option<bool>,
+) -> Option<(Vec<usize>, bool)> {
+    for sub in split_segments(path) {
+        let mut ring: Vec<usize> = vec![sub.start_index];
+        for (_, _, to, _) in &sub.segs {
+            if *to != sub.start_index {
+                ring.push(*to);
+            }
+        }
+        let (Some(ia), Some(ib)) = (
+            ring.iter().position(|x| *x == a),
+            ring.iter().position(|x| *x == b),
+        ) else {
+            continue;
+        };
+        let n = ring.len();
+        let ahead = if ib >= ia {
+            Some(ib - ia)
+        } else if sub.closed {
+            Some(n - ia + ib)
+        } else {
+            None
+        };
+        let behind = if ia >= ib {
+            Some(ia - ib)
+        } else if sub.closed {
+            Some(ia + n - ib)
+        } else {
+            None
+        };
+        let dir = match forward {
+            Some(d) => d,
+            None => match (ahead, behind) {
+                (Some(f), Some(r)) => f <= r,
+                (Some(_), None) => true,
+                _ => false,
+            },
+        };
+        let len = if dir { ahead } else { behind }?;
+        let run = (0..=len)
+            .map(|k| {
+                if dir {
+                    ring[(ia + k) % n]
+                } else {
+                    ring[(ia + n - k) % n]
+                }
+            })
+            .collect();
+        return Some((run, dir));
+    }
+    None
+}
+
+/// Join two end nodes with a straight segment (the Shape tool's Extend
+/// Curve to Close): the two ends of one open subpath close it; ends of two
+/// open subpaths make one subpath. `None` when either is not an end of an
+/// open subpath.
+pub fn connect_ends(path: &BezPath, a: usize, b: usize) -> Option<BezPath> {
+    link_ends(path, a, b, false)
+}
+
+/// Join two end nodes into one (the Shape tool's Join): both move to the
+/// point halfway between them, their handles along, and become a single
+/// node with no segment added. The two ends of one open subpath close it
+/// there; ends of two open subpaths make one subpath running through the
+/// joined node. `None` when either is not an end of an open subpath, or
+/// both are the same end.
+pub fn join_ends(path: &BezPath, a: usize, b: usize) -> Option<BezPath> {
+    let n = normalize(path);
+    let els = n.elements();
+    let (pa, pb) = (end_point(els.get(a)?)?, end_point(els.get(b)?)?);
+    let mid = pa.lerp(pb, 0.5);
+    let moved = move_node(&move_node(&n, a, mid - pa), b, mid - pb);
+    link_ends(&moved, a, b, true)
+}
+
+/// Shared by [`connect_ends`] and [`join_ends`]: with `fuse` the ends meet
+/// without a segment between them (they lie on one point already).
+fn link_ends(path: &BezPath, a: usize, b: usize, fuse: bool) -> Option<BezPath> {
+    let subs = split_segments(path);
+    // (subpath, is the end rather than the start)
+    let find = |x: usize| -> Option<(usize, bool)> {
+        subs.iter().enumerate().find_map(|(k, s)| {
+            if s.closed || s.segs.is_empty() {
+                return None;
+            }
+            if s.start_index == x {
+                Some((k, false))
+            } else if s.segs.last().map(|seg| seg.2) == Some(x) {
+                Some((k, true))
+            } else {
+                None
+            }
+        })
+    };
+    let (sa, ea) = find(a)?;
+    let (sb, eb) = find(b)?;
+    let to_path = |s: &Segs| -> BezPath {
+        let mut p = BezPath::new();
+        p.move_to(s.start);
+        for (el, _, _, _) in &s.segs {
+            p.push(*el);
+        }
+        p
+    };
+    let mut out = BezPath::new();
+    if sa == sb {
+        if ea == eb {
+            return None;
+        }
+        for (k, s) in subs.iter().enumerate() {
+            let mut p = to_path(s);
+            if s.closed || k == sa {
+                p.close_path();
+            }
+            out.extend(p);
+        }
+        return Some(out);
+    }
+    // The first subpath ends at `a`, the second starts at `b`.
+    let first = to_path(&subs[sa]);
+    let first = if ea { first } else { reverse(&first) };
+    let second = to_path(&subs[sb]);
+    let second = if eb { reverse(&second) } else { second };
+    let mut joined = first;
+    for el in second.elements() {
+        match *el {
+            PathEl::MoveTo(_) if fuse => {}
+            PathEl::MoveTo(p) => joined.line_to(p),
+            other => joined.push(other),
+        }
+    }
+    for (k, s) in subs.iter().enumerate() {
+        if k == sa {
+            out.extend(joined.clone());
+        } else if k != sb {
+            let mut p = to_path(s);
+            if s.closed {
+                p.close_path();
+            }
+            out.extend(p);
+        }
+    }
+    Some(out)
+}
+
+/// The point at parameter `t` of the segment ending at element `index`
+/// (a line, a curve or a closing line).
+pub fn point_on_segment(path: &BezPath, index: usize, t: f64) -> Option<Point> {
+    use kurbo::{CubicBez, ParamCurve};
+    let n = normalize(path);
+    let els = n.elements();
+    if index == 0 || index >= els.len() {
+        return None;
+    }
+    let prev = prev_point(els, index);
+    let t = t.clamp(0.0, 1.0);
+    match els[index] {
+        PathEl::LineTo(p) => Some(prev.lerp(p, t)),
+        PathEl::CurveTo(c1, c2, p) => Some(CubicBez::new(prev, c1, c2, p).eval(t)),
+        PathEl::ClosePath => Some(prev.lerp(subpath_start(els, index), t)),
+        _ => None,
+    }
+}
+
+/// Nearest segment to a point: (element index, t, distance).
+pub fn nearest_segment(path: &BezPath, p: Point) -> Option<(usize, f64, f64)> {
+    use kurbo::{CubicBez, Line, ParamCurve, ParamCurveNearest};
+    let n = normalize(path);
+    let els = n.elements();
+    let mut best: Option<(usize, f64, f64)> = None;
+    for (i, el) in els.iter().enumerate() {
+        let prev = prev_point(els, i);
+        let (t, d) = match *el {
+            PathEl::LineTo(q) => {
+                let l = Line::new(prev, q);
+                let r = l.nearest(p, 1e-6);
+                (r.t, r.distance_sq.sqrt())
+            }
+            PathEl::CurveTo(c1, c2, q) => {
+                let c = CubicBez::new(prev, c1, c2, q);
+                let r = c.nearest(p, 1e-6);
+                let _ = c.eval(r.t);
+                (r.t, r.distance_sq.sqrt())
+            }
+            PathEl::ClosePath => {
+                let l = Line::new(prev, subpath_start(els, i));
+                let r = l.nearest(p, 1e-6);
+                (r.t, r.distance_sq.sqrt())
+            }
+            _ => continue,
+        };
+        if best.map(|b| d < b.2).unwrap_or(true) {
+            best = Some((i, t, d));
+        }
+    }
+    best
+}
+
+fn prev_point(els: &[PathEl], index: usize) -> Point {
+    if index == 0 {
+        return Point::ZERO;
+    }
+    let i = index - 1;
+    match els[i] {
+        PathEl::MoveTo(p) | PathEl::LineTo(p) | PathEl::CurveTo(_, _, p) | PathEl::QuadTo(_, p) => {
+            p
+        }
+        PathEl::ClosePath => subpath_start(els, i),
+    }
+}
+
+fn subpath_start(els: &[PathEl], index: usize) -> Point {
+    let mut i = index;
+    loop {
+        if let PathEl::MoveTo(p) = els[i] {
+            return p;
+        }
+        if i == 0 {
+            return Point::ZERO;
+        }
+        i -= 1;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A closed smooth curve through four points: four curves, the last one
+    /// back onto the start, then the close.
+    fn round() -> BezPath {
+        crate::geometry::smooth_path(
+            &[
+                Point::new(0.0, 0.0),
+                Point::new(10.0, 0.0),
+                Point::new(10.0, 10.0),
+                Point::new(0.0, 10.0),
+            ],
+            true,
+        )
+    }
+
+    fn last_curve_end(p: &BezPath) -> Point {
+        p.elements()
+            .iter()
+            .rev()
+            .find_map(|e| match e {
+                PathEl::CurveTo(_, _, q) | PathEl::LineTo(q) => Some(*q),
+                _ => None,
+            })
+            .unwrap_or(Point::ZERO)
+    }
+
+    #[test]
+    fn a_closed_curve_ending_on_its_start_has_one_start_node() {
+        let p = round();
+        let ns = nodes(&p);
+        assert_eq!(ns.len(), 4);
+        let start = ns[0];
+        assert!(start.is_start);
+        // The start shows both handles: it is a smooth node.
+        assert!(start.ctrl_in.is_some() && start.ctrl_out.is_some());
+        assert_ne!(node_type(&p, start.index), NodeType::Cusp);
+    }
+
+    #[test]
+    fn moving_the_start_node_takes_the_closing_end_along() {
+        let p = round();
+        let moved = move_node(&p, 0, Vec2::new(-3.0, -2.0));
+        let start = match moved.elements()[0] {
+            PathEl::MoveTo(q) => q,
+            _ => Point::ZERO,
+        };
+        assert_eq!(start, Point::new(-3.0, -2.0));
+        assert_eq!(last_curve_end(&moved), start);
+        // Its incoming handle moved with it.
+        let before = nodes(&p)[0].ctrl_in.unwrap_or(Point::ZERO);
+        let after = nodes(&moved)[0].ctrl_in.unwrap_or(Point::ZERO);
+        let d = after - before;
+        assert!(
+            (d.x + 3.0).abs() < 1e-9 && (d.y + 2.0).abs() < 1e-9,
+            "{d:?}"
+        );
+    }
+
+    /// A square whose last line comes back onto the start, then the close.
+    fn square_back_on_start() -> BezPath {
+        let mut p = BezPath::new();
+        p.move_to((0.0, 0.0));
+        p.line_to((10.0, 0.0));
+        p.line_to((10.0, 10.0));
+        p.line_to((0.0, 10.0));
+        p.line_to((0.0, 0.0));
+        p.close_path();
+        p
+    }
+
+    /// A square whose closing line the ClosePath draws.
+    fn square_closed_by_z() -> BezPath {
+        let mut p = BezPath::new();
+        p.move_to((0.0, 0.0));
+        p.line_to((10.0, 0.0));
+        p.line_to((10.0, 10.0));
+        p.line_to((0.0, 10.0));
+        p.close_path();
+        p
+    }
+
+    /// Whether `el` is the curve from (0, 10) down to the origin with its
+    /// handles at thirds.
+    fn thirds_down(el: PathEl) -> bool {
+        let near = |a: Point, b: Point| (a - b).hypot() < 1e-9;
+        matches!(el, PathEl::CurveTo(c1, c2, q)
+            if near(c1, Point::new(0.0, 10.0 * 2.0 / 3.0))
+                && near(c2, Point::new(0.0, 10.0 / 3.0))
+                && near(q, Point::ZERO))
+    }
+
+    fn curves_in(p: &BezPath) -> usize {
+        p.elements()
+            .iter()
+            .filter(|e| matches!(e, PathEl::CurveTo(..)))
+            .count()
+    }
+
+    /// To Curve and To Line act on the closing segment through the start
+    /// node of a closed curve, the node the segment ends at, as on any
+    /// other node; a closing line drawn by the ClosePath becomes a curve
+    /// of its own, also when that ClosePath is the segment chosen (#1618).
+    #[test]
+    fn to_curve_and_to_line_take_the_closing_segment_through_the_start_node() {
+        // The last curve back onto the start.
+        let p = round();
+        assert_eq!(curves_in(&p), 4);
+        let lined = to_line(&p, 0);
+        assert_eq!(curves_in(&lined), 3);
+        assert_eq!(lined.elements()[4], PathEl::LineTo(Point::new(0.0, 0.0)));
+        let curved = to_curve(&lined, 0);
+        assert_eq!(curves_in(&curved), 4);
+        assert!(matches!(curved.elements()[4], PathEl::CurveTo(_, _, q) if q == Point::ZERO));
+        // The last line back onto the start.
+        let curved = to_curve(&square_back_on_start(), 0);
+        assert!(thirds_down(curved.elements()[4]), "{curved:?}");
+        assert_eq!(nodes(&curved).len(), 4);
+        // The closing line the ClosePath draws: a curve before the close.
+        let p = square_closed_by_z();
+        for index in [0, 4] {
+            let curved = to_curve(&p, index);
+            assert_eq!(curved.elements().len(), 6, "{index}: {curved:?}");
+            assert!(thirds_down(curved.elements()[4]), "{index}: {curved:?}");
+            assert_eq!(curved.elements()[5], PathEl::ClosePath);
+            assert_eq!(nodes(&curved).len(), 4);
+            // And back to a line through the start node.
+            let back = to_line(&curved, 0);
+            assert_eq!(back.elements()[4], PathEl::LineTo(Point::ZERO));
+            assert_eq!(curves_in(&back), 0);
+        }
+        // A closing line is a line already; a ClosePath right on the start
+        // draws nothing itself: the segment before it is the closing one.
+        assert_eq!(to_line(&p, 0), p);
+        assert_eq!(
+            to_curve(&square_back_on_start(), 5),
+            to_curve(&square_back_on_start(), 0)
+        );
+        // The start of an open curve has no segment ending at it.
+        let mut open = BezPath::new();
+        open.move_to((0.0, 0.0));
+        open.line_to((10.0, 0.0));
+        assert_eq!(to_curve(&open, 0), open);
+    }
+
+    /// Break at the start of a closed curve opens it there, whichever way
+    /// it was closed, and through its closing segment too (#1618).
+    #[test]
+    fn breaking_at_the_start_of_a_closed_subpath_opens_it_there() {
+        let p = square_closed_by_z();
+        for index in [0, 4] {
+            let open = break_at(&p, index);
+            assert_eq!(open.elements().len(), 5, "{index}: {open:?}");
+            assert_eq!(open.elements()[4], PathEl::LineTo(Point::ZERO));
+            assert!(!open
+                .elements()
+                .iter()
+                .any(|e| matches!(e, PathEl::ClosePath)));
+        }
+        let p = square_back_on_start();
+        for index in [0, 5] {
+            let open = break_at(&p, index);
+            assert_eq!(open.elements().len(), 5, "{index}: {open:?}");
+            assert_eq!(open.elements()[4], PathEl::LineTo(Point::ZERO));
+        }
+        // Not at a middle node, whose own break splits the curve there.
+        let split = break_at(&square_closed_by_z(), 2);
+        assert_eq!(split.elements()[3], PathEl::MoveTo(Point::new(10.0, 10.0)));
+    }
+
+    #[test]
+    fn the_start_nodes_incoming_handle_is_the_last_segments() {
+        let p = round();
+        let target = Point::new(-4.0, 3.0);
+        let edited = move_handle(&p, 0, Which::In, target, NodeType::Cusp);
+        assert_eq!(nodes(&edited)[0].ctrl_in, Some(target));
+        // Smooth: the outgoing handle turns to stay opposite.
+        let smooth = move_handle(&p, 0, Which::In, target, NodeType::Smooth);
+        let n = nodes(&smooth)[0];
+        let (a, b) = (
+            n.ctrl_in.unwrap_or(Point::ZERO) - n.pos,
+            n.ctrl_out.unwrap_or(Point::ZERO) - n.pos,
+        );
+        assert!(a.cross(b).abs() < 1e-6 && a.dot(b) < 0.0);
+    }
+
+    #[test]
+    fn deleting_or_breaking_at_the_start_of_a_closed_curve() {
+        let p = round();
+        let deleted = delete_node(&p, 0);
+        let ns = nodes(&deleted);
+        assert_eq!(ns.len(), 3);
+        assert_eq!(ns[0].pos, Point::new(10.0, 0.0));
+        assert_eq!(last_curve_end(&deleted), ns[0].pos);
+        assert!(matches!(deleted.elements().last(), Some(PathEl::ClosePath)));
+        // Breaking opens the curve at its start; both ends stay put.
+        let broken = break_at(&p, 0);
+        assert!(!broken
+            .elements()
+            .iter()
+            .any(|e| matches!(e, PathEl::ClosePath)));
+        assert_eq!(nodes(&broken).len(), 5);
+        assert_eq!(last_curve_end(&broken), Point::new(0.0, 0.0));
+    }
+
+    fn sample() -> BezPath {
+        let mut p = BezPath::new();
+        p.move_to((0.0, 0.0));
+        p.line_to((10.0, 0.0));
+        p.curve_to((15.0, 0.0), (20.0, 5.0), (20.0, 10.0));
+        p.close_path();
+        p
+    }
+
+    #[test]
+    fn lists_nodes_with_handles() {
+        let n = nodes(&sample());
+        assert_eq!(n.len(), 3);
+        assert!(n[0].is_start);
+        assert_eq!(n[1].ctrl_out, Some(Point::new(15.0, 0.0)));
+        assert_eq!(n[2].ctrl_in, Some(Point::new(20.0, 5.0)));
+    }
+
+    /// Dragging a segment: the point under the pointer follows exactly,
+    /// the ends stay, lines become curves, closing lines too, and a smooth
+    /// end node stays smooth.
+    #[test]
+    fn bending_a_segment_moves_its_point_and_keeps_the_ends() {
+        use kurbo::{CubicBez, ParamCurve};
+        let mut line = BezPath::new();
+        line.move_to((0.0, 0.0));
+        line.line_to((30.0, 0.0));
+        let bent = bend_segment(&line, 1, 0.5, Vec2::new(0.0, 12.0));
+        let PathEl::CurveTo(c1, c2, p) = bent.elements()[1] else {
+            panic!("not a curve: {bent:?}");
+        };
+        assert_eq!(p, Point::new(30.0, 0.0));
+        let mid = CubicBez::new(Point::new(0.0, 0.0), c1, c2, p).eval(0.5);
+        assert!((mid - Point::new(15.0, 12.0)).hypot() < 1e-9, "{mid:?}");
+        // Off the middle: the point at t moves by d all the same.
+        let b2 = bend_segment(&line, 1, 0.2, Vec2::new(3.0, -4.0));
+        let PathEl::CurveTo(a1, a2, q) = b2.elements()[1] else {
+            panic!("not a curve");
+        };
+        let at = CubicBez::new(Point::new(0.0, 0.0), a1, a2, q).eval(0.2);
+        assert!((at - Point::new(9.0, -4.0)).hypot() < 1e-9, "{at:?}");
+        // A closing line: a curve is put in before the close.
+        let mut tri = BezPath::new();
+        tri.move_to((0.0, 0.0));
+        tri.line_to((20.0, 0.0));
+        tri.line_to((10.0, 20.0));
+        tri.close_path();
+        let b3 = bend_segment(&tri, 3, 0.5, Vec2::new(-5.0, 0.0));
+        let els = b3.elements();
+        assert!(matches!(els[3], PathEl::CurveTo(_, _, e) if e == Point::new(0.0, 0.0)));
+        assert!(matches!(els[4], PathEl::ClosePath));
+        assert_eq!(nodes(&b3).len(), 3);
+        // A smooth node at the end of the bent segment stays smooth.
+        let mut s = BezPath::new();
+        s.move_to((0.0, 0.0));
+        s.curve_to((5.0, 0.0), (10.0, -5.0), (20.0, 0.0));
+        s.curve_to((25.0, 2.5), (35.0, 0.0), (40.0, 0.0));
+        assert_eq!(node_type(&s, 1), NodeType::Smooth);
+        let b4 = bend_segment(&s, 1, 0.5, Vec2::new(0.0, 6.0));
+        assert_eq!(node_type(&b4, 1), NodeType::Smooth);
+        assert_eq!(nodes(&b4)[1].pos, Point::new(20.0, 0.0));
+        // Nonsense leaves the path as it was.
+        assert_eq!(bend_segment(&s, 0, 0.5, Vec2::new(1.0, 1.0)), normalize(&s));
+        assert_eq!(bend_segment(&s, 9, 0.5, Vec2::new(1.0, 1.0)), normalize(&s));
+        assert_eq!(
+            bend_segment(&s, 1, 0.5, Vec2::new(f64::NAN, 1.0)),
+            normalize(&s)
+        );
+    }
+
+    /// #1140: nodes chosen cusp whose handles happen to line up keep their
+    /// other handle when the segment between them is dragged.
+    #[test]
+    fn bending_a_segment_keeps_chosen_cusp_nodes_cusp() {
+        let mut s = BezPath::new();
+        s.move_to((-10.0, 0.0));
+        s.curve_to((-8.0, 0.0), (-5.0, 0.0), (0.0, 0.0));
+        s.curve_to((5.0, 0.0), (15.0, 0.0), (20.0, 0.0));
+        s.curve_to((25.0, 0.0), (28.0, 0.0), (30.0, 0.0));
+        // Both ends read symmetrical from their handles.
+        assert_eq!(node_type(&s, 1), NodeType::Symmetrical);
+        assert_eq!(node_type(&s, 2), NodeType::Symmetrical);
+        let mut chosen = std::collections::BTreeMap::new();
+        chosen.insert(1, NodeType::Cusp);
+        chosen.insert(2, NodeType::Cusp);
+        let b = bend_segment_with(&s, 2, 0.5, Vec2::new(0.0, 8.0), &chosen);
+        let els = b.elements();
+        // The outer handles stay where they were.
+        assert!(matches!(els[1], PathEl::CurveTo(_, c2, _) if c2 == Point::new(-5.0, 0.0)));
+        assert!(matches!(els[3], PathEl::CurveTo(c1, _, _) if c1 == Point::new(25.0, 0.0)));
+        // The segment itself bent.
+        assert!(matches!(els[2], PathEl::CurveTo(c1, c2, _) if c1.y > 0.0 && c2.y > 0.0));
+        // Without a chosen type the ends turn along, as before.
+        let b2 = bend_segment(&s, 2, 0.5, Vec2::new(0.0, 8.0));
+        assert!(matches!(b2.elements()[1], PathEl::CurveTo(_, c2, _) if c2.y < 0.0));
+    }
+
+    #[test]
+    fn move_node_drags_handles_along() {
+        let p = move_node(&sample(), 1, Vec2::new(0.0, 5.0));
+        let n = nodes(&p);
+        assert_eq!(n[1].pos, Point::new(10.0, 5.0));
+        assert_eq!(n[1].ctrl_out, Some(Point::new(15.0, 5.0)));
+    }
+
+    #[test]
+    fn add_and_delete_node_round_trip() {
+        let p = add_node(&sample(), 1, 0.5);
+        assert_eq!(nodes(&p).len(), 4);
+        assert_eq!(nodes(&p)[1].pos, Point::new(5.0, 0.0));
+        let q = delete_node(&p, 1);
+        assert_eq!(nodes(&q).len(), 3);
+        let c = add_node(&sample(), 2, 0.5);
+        assert_eq!(
+            c.elements()
+                .iter()
+                .filter(|e| matches!(e, PathEl::CurveTo(..)))
+                .count(),
+            2
+        );
+    }
+
+    #[test]
+    fn deleting_a_node_on_a_curve_keeps_the_shape() {
+        // Split a curve, then delete the inserted node: the single curve
+        // comes back, matching the original closely, not cutting a corner.
+        let mut p = BezPath::new();
+        p.move_to((0.0, 0.0));
+        p.curve_to((10.0, 30.0), (30.0, 30.0), (40.0, 0.0));
+        let split = add_node(&p, 1, 0.5);
+        assert_eq!(nodes(&split).len(), 3);
+        let back = delete_node(&split, 1);
+        assert_eq!(nodes(&back).len(), 2);
+        assert!(
+            matches!(back.elements()[1], PathEl::CurveTo(..)),
+            "got {:?}",
+            back.elements()[1]
+        );
+        // The rebuilt curve follows the original within a small tolerance
+        // (chord-length fitting, not an exact inverse of the split).
+        for i in 0..=10 {
+            let t = i as f64 / 10.0;
+            let a = point_on_segment(&p, 1, t).unwrap();
+            let d = nearest_segment(&back, a).unwrap().2;
+            assert!(d < 0.3, "round trip off by {d} at t={t}");
+        }
+        // It still bulges towards the old apex, nowhere near the straight
+        // chord between the two remaining nodes.
+        let mid = point_on_segment(&back, 1, 0.5).unwrap();
+        assert!(mid.y > 15.0, "curve collapsed towards the chord: {mid:?}");
+    }
+
+    /// A closed curve split at its start and at a middle point, then the
+    /// added node deleted: the first node of a closed curve keeps the
+    /// shape as well as any other node does (#472).
+    #[test]
+    fn deleting_the_start_of_a_closed_curve_keeps_the_shape() {
+        let mut p = BezPath::new();
+        p.move_to((0.0, 0.0));
+        p.curve_to((10.0, 30.0), (30.0, 30.0), (40.0, 0.0));
+        p.curve_to((30.0, -30.0), (10.0, -30.0), (0.0, 0.0));
+        p.close_path();
+        // A node in the middle of the second curve, then that curve split
+        // so the path starts at the added node: deleting the start must
+        // give back the original shape.
+        let split = add_node(&p, 2, 0.5);
+        let ns = nodes(&split);
+        assert_eq!(ns.len(), 3);
+        let start = ns[2].pos;
+        let mut rotated = BezPath::new();
+        rotated.move_to(start);
+        let els = split.elements();
+        // From the added node: its curve's second half, the first curve,
+        // the second curve's first half back to it.
+        if let (
+            PathEl::CurveTo(a1, a2, a),
+            PathEl::CurveTo(b1, b2, b),
+            PathEl::CurveTo(c1, c2, c),
+        ) = (els[1], els[2], els[3])
+        {
+            rotated.curve_to(c1, c2, c);
+            rotated.curve_to(a1, a2, a);
+            rotated.curve_to(b1, b2, b);
+        } else {
+            panic!("curves: {els:?}");
+        }
+        rotated.close_path();
+        let back = delete_node(&rotated, 0);
+        assert_eq!(nodes(&back).len(), 2);
+        for i in 0..=10 {
+            let t = i as f64 / 10.0;
+            let q = point_on_segment(&p, 2, t).unwrap();
+            let d = nearest_segment(&back, q).unwrap().2;
+            assert!(d < 0.3, "off by {d} at t={t}");
+        }
+    }
+
+    fn square() -> BezPath {
+        let mut p = BezPath::new();
+        p.move_to((0.0, 0.0));
+        p.line_to((10.0, 0.0));
+        p.line_to((10.0, 10.0));
+        p.line_to((0.0, 10.0));
+        p.close_path();
+        p
+    }
+
+    /// Two neighbouring line nodes deleted together become one curve
+    /// fitted to the old corner, keeping the outer directions (#675).
+    #[test]
+    fn neighbouring_line_nodes_deleted_together_become_a_curve() {
+        let q = delete_nodes(&square(), &[1, 2]);
+        let els = q.elements();
+        assert_eq!(nodes(&q).len(), 2, "{els:?}");
+        assert_eq!(els[0], PathEl::MoveTo(Point::new(0.0, 0.0)));
+        let PathEl::CurveTo(c1, c2, end) = els[1] else {
+            panic!("a curve: {els:?}");
+        };
+        assert_eq!(end, Point::new(0.0, 10.0));
+        // The curve reaches out towards the old right side.
+        assert!(c1.x > 5.0 && c2.x > 5.0, "{c1:?} {c2:?}");
+        let b = kurbo::Shape::bounding_box(&q);
+        assert!(b.x1 > 6.0 && b.x1 < 12.0, "{b:?}");
+        // The closing line is still the ClosePath's own.
+        assert_eq!(els.len(), 3);
+        assert_eq!(els[2], PathEl::ClosePath);
+        // Deleting them one at a time, or one alone, keeps straight lines.
+        let one = delete_nodes(&square(), &[1]);
+        assert_eq!(one, delete_node(&square(), 1));
+        assert!(!one
+            .elements()
+            .iter()
+            .any(|e| matches!(e, PathEl::CurveTo(..))));
+    }
+
+    /// On a circle, deleting two neighbouring nodes keeps the two left
+    /// smooth: the new curve leaves and arrives along the untouched arcs.
+    #[test]
+    fn a_run_between_curves_keeps_the_kept_nodes_smooth() {
+        let p = crate::geometry::ellipse_path(crate::geometry::Rect::new(-10.0, -10.0, 10.0, 10.0));
+        let ns = nodes(&p);
+        assert_eq!(ns.len(), 4);
+        let q = delete_nodes(&p, &[ns[1].index, ns[2].index]);
+        let left = nodes(&q);
+        assert_eq!(left.len(), 2, "{q:?}");
+        for n in &left {
+            let (Some(i), Some(o)) = (n.ctrl_in, n.ctrl_out) else {
+                panic!("handles on both sides: {n:?}");
+            };
+            let (din, dout) = (n.pos - i, o - n.pos);
+            let cross = din.cross(dout) / (din.hypot() * dout.hypot());
+            assert!(
+                cross.abs() < 1e-6 && din.dot(dout) > 0.0,
+                "a corner at {n:?}"
+            );
+        }
+    }
+
+    /// A run between a curve and lines holds the tangent on the curve's
+    /// side only: the node there stays smooth, the far end is free.
+    #[test]
+    fn a_run_holds_the_tangent_where_a_curve_meets_it() {
+        let mut p = BezPath::new();
+        p.move_to((0.0, 0.0));
+        p.curve_to((3.0, 6.0), (7.0, 6.0), (10.0, 4.0));
+        p.line_to((20.0, 10.0));
+        p.line_to((30.0, 0.0));
+        p.line_to((40.0, 0.0));
+        p.line_to((50.0, 0.0));
+        let q = delete_nodes(&p, &[2, 3]);
+        let ns = nodes(&q);
+        assert_eq!(ns.len(), 4, "{q:?}");
+        let n = ns[1];
+        let Some(o) = n.ctrl_out else {
+            panic!("a handle out: {n:?}");
+        };
+        // Leaving along the line it left on before, (10, 4) to (20, 10).
+        let dout = o - n.pos;
+        assert!(
+            dout.cross(Vec2::new(10.0, 6.0)).abs() < 1e-6 * dout.hypot(),
+            "{n:?}"
+        );
+    }
+
+    /// One node at a time, and a closed curve left with one node, go as
+    /// deleting them one by one does.
+    #[test]
+    fn lone_nodes_go_as_delete_node_takes_them() {
+        let circle =
+            crate::geometry::ellipse_path(crate::geometry::Rect::new(-10.0, -10.0, 10.0, 10.0));
+        let mut open = BezPath::new();
+        open.move_to((0.0, 0.0));
+        open.curve_to((5.0, 5.0), (10.0, 5.0), (15.0, 0.0));
+        open.line_to((20.0, 0.0));
+        open.line_to((30.0, 5.0));
+        for (p, gone) in [
+            (square(), vec![0]),
+            (square(), vec![1]),
+            (square(), vec![0, 2]),
+            (circle.clone(), vec![0]),
+            (circle.clone(), vec![nodes(&circle)[2].index]),
+            (open.clone(), vec![0]),
+            (open.clone(), vec![1, 3]),
+            (square(), vec![1, 2, 3]),
+        ] {
+            let one_by_one = {
+                let mut sorted = gone.clone();
+                sorted.sort_unstable_by(|a, b| b.cmp(a));
+                sorted.iter().fold(p.clone(), |q, &i| delete_node(&q, i))
+            };
+            assert_eq!(
+                delete_nodes(&p, &gone),
+                one_by_one,
+                "{p:?} without {gone:?}"
+            );
+        }
+    }
+
+    /// Every node of a long curve chosen and deleted, or every other one,
+    /// is one pass: no time per node per node.
+    #[test]
+    fn deleting_many_nodes_of_a_long_curve_is_one_pass() {
+        let mut p = BezPath::new();
+        p.move_to((0.0, 0.0));
+        for i in 1..3000 {
+            p.line_to((i as f64, (i % 7) as f64));
+        }
+        let all: Vec<usize> = (0..3000).collect();
+        let started = std::time::Instant::now();
+        assert!(delete_nodes(&p, &all).elements().is_empty());
+        let every_other: Vec<usize> = (1..2999).step_by(2).collect();
+        let q = delete_nodes(&p, &every_other);
+        assert_eq!(nodes(&q).len(), 3000 - every_other.len());
+        assert!(
+            started.elapsed().as_secs_f64() < 2.0,
+            "{:?}",
+            started.elapsed()
+        );
+    }
+
+    /// A run through a closed curve's start goes the same way: the curve
+    /// starts at the next node kept.
+    #[test]
+    fn a_run_through_the_start_of_a_closed_curve_becomes_a_curve() {
+        let q = delete_nodes(&square(), &[0, 3]);
+        let els = q.elements();
+        assert_eq!(nodes(&q).len(), 2, "{els:?}");
+        assert_eq!(els[0], PathEl::MoveTo(Point::new(10.0, 0.0)));
+        assert_eq!(els[1], PathEl::LineTo(Point::new(10.0, 10.0)));
+        let PathEl::CurveTo(c1, c2, end) = els[2] else {
+            panic!("a curve: {els:?}");
+        };
+        assert_eq!(end, Point::new(10.0, 0.0));
+        assert!(c1.x < 7.0 && c2.x < 7.0, "{c1:?} {c2:?}");
+        assert_eq!(els[3], PathEl::ClosePath);
+    }
+
+    /// On an open curve the run between the ends becomes one curve; a run
+    /// at an end only shortens it.
+    #[test]
+    fn runs_on_an_open_curve() {
+        let mut p = BezPath::new();
+        p.move_to((0.0, 0.0));
+        p.line_to((10.0, 0.0));
+        p.line_to((20.0, 10.0));
+        p.line_to((30.0, 0.0));
+        p.line_to((40.0, 0.0));
+        let q = delete_nodes(&p, &[1, 2, 3]);
+        assert_eq!(q.elements().len(), 2, "{q:?}");
+        let PathEl::CurveTo(_, _, end) = q.elements()[1] else {
+            panic!("a curve: {q:?}");
+        };
+        assert_eq!(end, Point::new(40.0, 0.0));
+        assert!(kurbo::Shape::bounding_box(&q).y1 > 2.0, "{q:?}");
+        // The last two nodes: the curve ends at the third.
+        let q = delete_nodes(&p, &[3, 4]);
+        assert_eq!(nodes(&q).len(), 3, "{q:?}");
+        assert_eq!(
+            q.elements().last(),
+            Some(&PathEl::LineTo(Point::new(20.0, 10.0)))
+        );
+    }
+
+    #[test]
+    fn deleting_a_node_between_a_line_and_a_curve_keeps_a_curve() {
+        // sample() is a line then a curve, closed. Deleting the node where
+        // they meet must not turn the join into a straight line.
+        let q = delete_node(&sample(), 1);
+        assert_eq!(nodes(&q).len(), 2);
+        assert!(
+            matches!(q.elements()[1], PathEl::CurveTo(..)),
+            "got {:?}",
+            q.elements()[1]
+        );
+    }
+
+    #[test]
+    fn deleting_a_corner_of_a_polyline_stays_straight() {
+        // With a line on both sides there is no curve to keep: a plain join.
+        let mut p = BezPath::new();
+        p.move_to((0.0, 0.0));
+        p.line_to((10.0, 0.0));
+        p.line_to((20.0, 8.0));
+        p.line_to((30.0, 0.0));
+        let q = delete_node(&p, 2);
+        assert_eq!(nodes(&q).len(), 3);
+        assert!(
+            q.elements()
+                .iter()
+                .all(|e| !matches!(e, PathEl::CurveTo(..))),
+            "a line join turned into a curve: {q:?}"
+        );
+    }
+
+    #[test]
+    fn smooth_handles_stay_collinear() {
+        let mut p = BezPath::new();
+        p.move_to((0.0, 0.0));
+        p.curve_to((0.0, 5.0), (5.0, 10.0), (10.0, 10.0));
+        p.curve_to((15.0, 10.0), (20.0, 5.0), (20.0, 0.0));
+        let q = move_handle(
+            &p,
+            1,
+            Which::Out,
+            Point::new(10.0, 15.0),
+            NodeType::Symmetrical,
+        );
+        let n = nodes(&q)[1];
+        assert_eq!(n.ctrl_out, Some(Point::new(10.0, 15.0)));
+        assert_eq!(n.ctrl_in, Some(Point::new(10.0, 5.0)));
+        assert_eq!(node_type(&q, 1), NodeType::Symmetrical);
+    }
+
+    #[test]
+    fn nearest_segment_finds_the_line() {
+        let (i, t, d) = nearest_segment(&sample(), Point::new(5.0, 1.0)).unwrap();
+        assert_eq!(i, 1);
+        assert!((t - 0.5).abs() < 1e-3);
+        assert!((d - 1.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn reverse_keeps_geometry() {
+        let r = reverse(&sample());
+        let n = nodes(&r);
+        assert_eq!(n[0].pos, Point::new(20.0, 10.0));
+        assert_eq!(n.last().unwrap().pos, Point::new(0.0, 0.0));
+    }
+}
+
+#[cfg(test)]
+mod reduce_tests {
+    use super::*;
+
+    #[test]
+    fn reduce_drops_collinear_nodes_and_align_levels_them() {
+        let mut p = BezPath::new();
+        p.move_to((0.0, 0.0));
+        p.line_to((5.0, 0.01));
+        p.line_to((10.0, 0.0));
+        p.line_to((10.0, 10.0));
+        let r = reduce_nodes(&p, 0.1);
+        assert_eq!(nodes(&r).len(), 3, "{r:?}");
+
+        let a = align_nodes(&p, &[1, 2], true, false);
+        let ns = nodes(&a);
+        assert!((ns[1].pos.y - ns[2].pos.y).abs() < 1e-9);
+    }
+
+    /// An ellipse of `n` arc cubics, one node every 360/n degrees from
+    /// `from` (radians).
+    fn ellipse(n: usize, from: f64, rx: f64, ry: f64) -> BezPath {
+        let th = std::f64::consts::TAU / n as f64;
+        let k = 4.0 / 3.0 * (th / 4.0).tan();
+        let pt = |a: f64| Point::new(rx + rx * a.cos(), ry + ry * a.sin());
+        let tan = |a: f64| Vec2::new(-rx * a.sin(), ry * a.cos());
+        let mut p = BezPath::new();
+        p.move_to(pt(from));
+        for i in 0..n {
+            let a0 = from + th * i as f64;
+            let a1 = from + th * (i + 1) as f64;
+            p.curve_to(pt(a0) + tan(a0) * k, pt(a1) - tan(a1) * k, pt(a1));
+        }
+        p.close_path();
+        p
+    }
+
+    /// The farthest `b` gets from `a`, and `a` from `b`, sampled finely.
+    fn distance(a: &BezPath, b: &BezPath) -> f64 {
+        use kurbo::{ParamCurve, ParamCurveNearest};
+        let one_way = |x: &BezPath, y: &BezPath| {
+            let mut worst = 0.0f64;
+            for seg in x.segments() {
+                for i in 0..=64 {
+                    let q = seg.eval(i as f64 / 64.0);
+                    let d = y
+                        .segments()
+                        .map(|s| s.nearest(q, 1e-9).distance_sq)
+                        .fold(f64::INFINITY, f64::min);
+                    worst = worst.max(d.sqrt());
+                }
+            }
+            worst
+        };
+        one_way(a, b).max(one_way(b, a))
+    }
+
+    /// A 1000 x 500 mm ellipse of 12 nodes is within 0.12 mm of one of
+    /// 4: at 0.5 mm it comes down to 4 nodes, and at no tolerance does
+    /// the curve move farther than the tolerance.
+    #[test]
+    fn reduce_keeps_the_curve_within_the_tolerance_everywhere() {
+        let twelve = ellipse(12, 0.0, 500.0, 250.0);
+        assert!(distance(&twelve, &ellipse(4, 0.0, 500.0, 250.0)) < 0.12);
+        let r = reduce_nodes(&twelve, 0.5);
+        assert_eq!(nodes(&r).len(), 4, "{r:?}");
+        for tol in [0.05, 0.5, 1.0, 2.0, 10.0, 50.0] {
+            let r = reduce_nodes(&twelve, tol);
+            let d = distance(&twelve, &r);
+            assert!(
+                d <= tol * 1.1,
+                "{tol} mm: moved {d} mm, {} nodes",
+                nodes(&r).len()
+            );
+        }
+        // Tiny tolerance: nothing goes, and the path is the same.
+        assert_eq!(reduce_nodes(&twelve, 1e-6), normalize(&twelve));
+    }
+
+    /// A wobbly, traced-looking closed curve of 200 nodes keeps its shape:
+    /// it is not reduced to a single node.
+    #[test]
+    fn reduce_keeps_the_shape_of_a_wobbly_curve() {
+        let n = 200;
+        let pt = |i: usize| {
+            let a = std::f64::consts::TAU * i as f64 / n as f64;
+            let r = 100.0 + 3.0 * (7.0 * a).sin() + 0.05 * ((i * 7919) % 13) as f64;
+            Point::new(r * a.cos(), r * a.sin())
+        };
+        let mut p = BezPath::new();
+        p.move_to(pt(0));
+        for i in 1..=n {
+            let (a, b) = (pt(i - 1), pt(i % n));
+            p.curve_to(a.lerp(b, 1.0 / 3.0), a.lerp(b, 2.0 / 3.0), b);
+        }
+        p.close_path();
+        let r = reduce_nodes(&p, 0.5);
+        let left = nodes(&r).len();
+        assert!((8..60).contains(&left), "{left} nodes");
+        assert!(distance(&p, &r) <= 0.55, "{}", distance(&p, &r));
+    }
+
+    /// The start of a closed curve goes like any other node.
+    #[test]
+    fn reduce_can_drop_the_start_of_a_closed_curve() {
+        // Started 30 degrees past a quadrant, on a node that can go.
+        let p = ellipse(12, std::f64::consts::TAU / 12.0, 500.0, 250.0);
+        let r = reduce_nodes(&p, 0.5);
+        assert_eq!(nodes(&r).len(), 4, "{r:?}");
+        assert!(distance(&p, &r) <= 0.55);
+        assert!(matches!(r.elements().last(), Some(PathEl::ClosePath)));
+        // Chosen nodes only: the start among them goes, the rest stay.
+        let r = reduce_chosen_nodes(&p, &[0], 0.5);
+        assert_eq!(nodes(&r).len(), 11, "{r:?}");
+        let r = reduce_chosen_nodes(&p, &[3], 0.5);
+        assert_eq!(nodes(&r).len(), 11, "{r:?}");
+    }
+
+    /// Open curves keep their ends; corners stay; a polygon closed by its
+    /// ClosePath keeps that closing line.
+    #[test]
+    fn reduce_keeps_ends_corners_and_the_closing_line() {
+        let mut open = BezPath::new();
+        open.move_to((0.0, 0.0));
+        open.line_to((5.0, 0.0));
+        open.line_to((10.0, 0.0));
+        let r = reduce_nodes(&open, 0.1);
+        assert_eq!(nodes(&r).len(), 2, "{r:?}");
+        assert_eq!(r.elements()[0], PathEl::MoveTo(Point::new(0.0, 0.0)));
+        let mut square = BezPath::new();
+        square.move_to((0.0, 0.0));
+        square.line_to((10.0, 0.0));
+        square.line_to((20.0, 0.0));
+        square.line_to((20.0, 20.0));
+        square.line_to((0.0, 20.0));
+        square.close_path();
+        let r = reduce_nodes(&square, 0.1);
+        assert_eq!(nodes(&r).len(), 4, "{r:?}");
+        // Still closed by its ClosePath, without an extra line to the start.
+        assert_eq!(r.elements().len(), 5, "{r:?}");
+        assert!(distance(&square, &r) < 1e-9);
+        // Bad input is left alone.
+        assert_eq!(reduce_nodes(&square, f64::NAN), normalize(&square));
+        let mut bad = square.clone();
+        bad.line_to((f64::NAN, 0.0));
+        assert_eq!(
+            reduce_nodes(&bad, 1.0).elements().len(),
+            bad.elements().len()
+        );
+    }
+}
+
+#[cfg(test)]
+mod segment_tests {
+    use super::*;
+    use crate::geometry::Affine;
+
+    fn zigzag() -> BezPath {
+        let mut p = BezPath::new();
+        p.move_to((0.0, 0.0));
+        p.line_to((10.0, 0.0));
+        p.line_to((10.0, 10.0));
+        p.curve_to((5.0, 15.0), (0.0, 15.0), (0.0, 10.0));
+        p
+    }
+
+    #[test]
+    fn nodes_transform_with_their_handles() {
+        // Nodes 2 and 3 (the curve's ends) doubled about the origin.
+        let q = transform_nodes(&zigzag(), &[2, 3], Affine::scale(2.0));
+        let ns = nodes(&q);
+        assert_eq!(ns[2].pos, Point::new(20.0, 20.0));
+        assert_eq!(ns[2].ctrl_out, Some(Point::new(10.0, 30.0)));
+        assert_eq!(ns[3].pos, Point::new(0.0, 20.0));
+        assert_eq!(ns[3].ctrl_in, Some(Point::new(0.0, 30.0)));
+        // A closed square's start moves its closing end too.
+        let mut sq = BezPath::new();
+        sq.move_to((0.0, 0.0));
+        sq.line_to((10.0, 0.0));
+        sq.line_to((10.0, 10.0));
+        sq.line_to((0.0, 0.0));
+        sq.close_path();
+        let q = transform_nodes(&sq, &[0], Affine::translate((1.0, 1.0)));
+        assert_eq!(q.elements()[0], PathEl::MoveTo(Point::new(1.0, 1.0)));
+        assert_eq!(q.elements()[3], PathEl::LineTo(Point::new(1.0, 1.0)));
+    }
+
+    #[test]
+    fn segments_between_chosen_nodes_copy_and_cut() {
+        let p = zigzag();
+        let copied = selected_segments(&p, &[1, 2, 3]);
+        let ns = nodes(&copied);
+        assert_eq!(ns.len(), 3);
+        assert_eq!(ns[0].pos, Point::new(10.0, 0.0));
+        let left = without_segments(&p, &[1, 2, 3]);
+        assert_eq!(nodes(&left).len(), 2);
+        // Cutting one side of a closed square leaves one open three-sided path.
+        let sq = crate::geometry::Shape::to_path(
+            &crate::geometry::Rect::new(0.0, 0.0, 10.0, 10.0),
+            0.01,
+        );
+        let left = without_segments(&sq, &[1, 2]);
+        assert_eq!(
+            left.elements()
+                .iter()
+                .filter(|e| matches!(e, PathEl::MoveTo(_)))
+                .count(),
+            1
+        );
+        assert!(!left.elements().contains(&PathEl::ClosePath));
+        assert_eq!(nodes(&left).len(), 4);
+        // Nothing chosen: nothing copied.
+        assert!(selected_segments(&p, &[1]).elements().is_empty());
+    }
+
+    #[test]
+    fn runs_follow_the_subpath() {
+        let p = zigzag();
+        assert_eq!(node_run(&p, 3, 1, None), Some((vec![3, 2, 1], false)));
+        // An open subpath has one way only.
+        assert_eq!(node_run(&p, 3, 1, Some(true)), None);
+        let sq = crate::geometry::Shape::to_path(
+            &crate::geometry::Rect::new(0.0, 0.0, 10.0, 10.0),
+            0.01,
+        );
+        // Round the start is shorter from 3 to 0.
+        assert_eq!(node_run(&sq, 3, 0, None), Some((vec![3, 0], true)));
+        assert_eq!(node_run(&sq, 1, 2, None), Some((vec![1, 2], true)));
+        // The other way round.
+        assert_eq!(
+            node_run(&sq, 1, 2, Some(false)),
+            Some((vec![1, 0, 3, 2], false))
+        );
+        assert_eq!(node_run(&sq, 2, 2, None), Some((vec![2], true)));
+        // Different subpaths: no run.
+        let mut two = p.clone();
+        two.move_to((50.0, 50.0));
+        two.line_to((60.0, 50.0));
+        assert_eq!(node_run(&two, 1, 4, None), None);
+    }
+
+    #[test]
+    fn extending_ends_closes_or_joins_subpaths() {
+        let p = zigzag();
+        let closed = connect_ends(&p, 0, 3).expect("its two ends");
+        assert_eq!(closed.elements().last(), Some(&PathEl::ClosePath));
+        let mut two = BezPath::new();
+        two.move_to((0.0, 0.0));
+        two.line_to((10.0, 0.0));
+        two.move_to((10.0, 5.0));
+        two.line_to((0.0, 5.0));
+        let joined = connect_ends(&two, 1, 2).expect("ends of two subpaths");
+        assert_eq!(
+            joined
+                .elements()
+                .iter()
+                .filter(|e| matches!(e, PathEl::MoveTo(_)))
+                .count(),
+            1
+        );
+        assert_eq!(nodes(&joined).len(), 4);
+        // A middle node is not an end.
+        assert!(connect_ends(&p, 1, 3).is_none());
+    }
+
+    fn moves(p: &BezPath) -> usize {
+        p.elements()
+            .iter()
+            .filter(|e| matches!(e, PathEl::MoveTo(_)))
+            .count()
+    }
+
+    fn drawn(p: &BezPath) -> usize {
+        p.elements()
+            .iter()
+            .filter(|e| matches!(e, PathEl::LineTo(_) | PathEl::CurveTo(..)))
+            .count()
+    }
+
+    #[test]
+    fn deleting_a_middle_segment_splits_an_open_curve() {
+        let mut p = BezPath::new();
+        p.move_to((0.0, 0.0));
+        p.line_to((10.0, 0.0));
+        p.line_to((20.0, 0.0));
+        p.line_to((30.0, 0.0));
+        let q = delete_segment(&p, 2);
+        assert_eq!(moves(&q), 2, "{q:?}");
+        assert_eq!(drawn(&q), 2);
+        // Every node stays where it was.
+        assert_eq!(nodes(&q).len(), 4);
+        // An end segment just goes: one subpath is left.
+        let e = delete_segment(&p, 3);
+        assert_eq!(moves(&e), 1);
+        assert_eq!(drawn(&e), 2);
+    }
+
+    #[test]
+    fn deleting_a_segment_opens_a_closed_curve_there() {
+        // A square whose closing side is a ClosePath (element 4).
+        let mut sq = BezPath::new();
+        sq.move_to((0.0, 0.0));
+        sq.line_to((10.0, 0.0));
+        sq.line_to((10.0, 10.0));
+        sq.line_to((0.0, 10.0));
+        sq.close_path();
+        let open = delete_segment(&sq, 4);
+        assert!(!open
+            .elements()
+            .iter()
+            .any(|e| matches!(e, PathEl::ClosePath)));
+        assert_eq!(moves(&open), 1);
+        assert_eq!(drawn(&open), 3);
+        assert_eq!(open.elements()[0], PathEl::MoveTo(Point::new(0.0, 0.0)));
+        // A side in the middle: the curve opens there and runs round.
+        let side = delete_segment(&sq, 2);
+        assert_eq!(moves(&side), 1);
+        assert_eq!(drawn(&side), 3);
+        assert_eq!(side.elements()[0], PathEl::MoveTo(Point::new(10.0, 10.0)));
+        // A closed smooth curve ending on its start loses one of its four.
+        let round = crate::geometry::smooth_path(
+            &[
+                Point::new(0.0, 0.0),
+                Point::new(10.0, 0.0),
+                Point::new(10.0, 10.0),
+                Point::new(0.0, 10.0),
+            ],
+            true,
+        );
+        let r = delete_segment(&round, 1);
+        assert_eq!(drawn(&r), 3);
+        assert!(!r.elements().iter().any(|e| matches!(e, PathEl::ClosePath)));
+    }
+
+    #[test]
+    fn deleting_a_missing_segment_changes_nothing() {
+        let mut p = BezPath::new();
+        p.move_to((0.0, 0.0));
+        p.line_to((10.0, 0.0));
+        p.curve_to((15.0, 0.0), (20.0, 5.0), (20.0, 10.0));
+        p.close_path();
+        assert_eq!(delete_segment(&p, 0), p);
+        assert_eq!(delete_segment(&p, 99), p);
+    }
+
+    #[test]
+    fn joining_ends_of_two_subpaths_fuses_them_without_a_segment() {
+        let mut p = BezPath::new();
+        p.move_to((0.0, 0.0));
+        p.curve_to((3.0, 5.0), (7.0, 5.0), (10.0, 0.0));
+        p.move_to((12.0, 0.0));
+        p.curve_to((15.0, -5.0), (18.0, -5.0), (20.0, 0.0));
+        let j = join_ends(&p, 1, 2).expect("joined");
+        // One subpath, still two curves: no straight segment between.
+        assert_eq!(
+            j.elements(),
+            &[
+                PathEl::MoveTo(Point::new(0.0, 0.0)),
+                PathEl::CurveTo(
+                    Point::new(3.0, 5.0),
+                    Point::new(8.0, 5.0),
+                    Point::new(11.0, 0.0)
+                ),
+                PathEl::CurveTo(
+                    Point::new(14.0, -5.0),
+                    Point::new(18.0, -5.0),
+                    Point::new(20.0, 0.0)
+                ),
+            ]
+        );
+        // Either order, and a start joined to a start (the first subpath
+        // runs the other way round).
+        assert_eq!(nodes(&join_ends(&p, 2, 1).expect("joined")).len(), 3);
+        assert_eq!(nodes(&join_ends(&p, 0, 2).expect("joined")).len(), 3);
+    }
+
+    #[test]
+    fn joining_the_two_ends_of_one_subpath_closes_it_at_one_node() {
+        let mut p = BezPath::new();
+        p.move_to((0.0, 0.0));
+        p.line_to((10.0, 0.0));
+        p.line_to((10.0, 10.0));
+        p.line_to((1.0, 9.0));
+        let j = join_ends(&p, 0, 3).expect("joined");
+        assert!(matches!(j.elements().last(), Some(PathEl::ClosePath)));
+        // Three nodes: the two ends are one now, and no line was added.
+        let ns = nodes(&j);
+        assert_eq!(ns.len(), 3);
+        assert_eq!(ns[0].pos, Point::new(0.5, 4.5));
+        let drawn = j
+            .elements()
+            .iter()
+            .filter(|e| matches!(e, PathEl::LineTo(_) | PathEl::CurveTo(..)))
+            .count();
+        assert_eq!(drawn, 3);
+    }
+
+    #[test]
+    fn joining_needs_two_ends_of_open_subpaths() {
+        let mut p = BezPath::new();
+        p.move_to((0.0, 0.0));
+        p.line_to((10.0, 0.0));
+        p.line_to((20.0, 0.0));
+        // A middle node is not an end; one end with itself is nothing.
+        assert!(join_ends(&p, 0, 1).is_none());
+        assert!(join_ends(&p, 2, 2).is_none());
+        assert!(join_ends(&p, 0, 99).is_none());
+        let mut c = p.clone();
+        c.close_path();
+        assert!(join_ends(&c, 0, 2).is_none());
+    }
+
+    fn close_pt(a: Point, b: Point) -> bool {
+        (a - b).hypot() < 1e-9
+    }
+
+    #[test]
+    fn smoothing_a_join_of_a_line_and_a_curve_lines_the_handle_up() {
+        // A line in, a curve out: the leaving handle carries on along the
+        // line, keeping its length; the line stays straight.
+        let mut p = BezPath::new();
+        p.move_to((0.0, 0.0));
+        p.line_to((10.0, 0.0));
+        p.curve_to((15.0, 5.0), (20.0, 5.0), (20.0, 10.0));
+        let s = set_node_type(&p, 1, NodeType::Smooth);
+        let len = 50f64.sqrt();
+        assert!(matches!(s.elements()[1], PathEl::LineTo(q) if close_pt(q, Point::new(10.0, 0.0))));
+        let PathEl::CurveTo(c1, _, _) = s.elements()[2] else {
+            panic!("{s:?}");
+        };
+        assert!(close_pt(c1, Point::new(10.0 + len, 0.0)), "{c1:?}");
+        // A curve in, a line out: the arriving handle points back along it.
+        let mut q = BezPath::new();
+        q.move_to((0.0, 0.0));
+        q.curve_to((2.0, 5.0), (5.0, 5.0), (10.0, 0.0));
+        q.line_to((20.0, 0.0));
+        let t = set_node_type(&q, 1, NodeType::Smooth);
+        let PathEl::CurveTo(_, c2, _) = t.elements()[1] else {
+            panic!("{t:?}");
+        };
+        assert!(close_pt(c2, Point::new(10.0 - len, 0.0)), "{c2:?}");
+        // Symmetrical does the same there (the line has no handle).
+        assert_eq!(set_node_type(&q, 1, NodeType::Symmetrical), t);
+    }
+
+    #[test]
+    fn smoothing_a_corner_of_two_lines_makes_them_curves() {
+        let mut p = BezPath::new();
+        p.move_to((0.0, 0.0));
+        p.line_to((10.0, 0.0));
+        p.line_to((10.0, 10.0));
+        let s = set_node_type(&p, 1, NodeType::Smooth);
+        assert!(matches!(s.elements()[1], PathEl::CurveTo(..)));
+        assert!(matches!(s.elements()[2], PathEl::CurveTo(..)));
+        // The handles line up (equal here, so they read symmetrical).
+        assert_ne!(node_type(&s, 1), NodeType::Cusp);
+        assert_eq!(nodes(&s)[1].pos, Point::new(10.0, 0.0));
+        assert_eq!(nodes(&s).len(), 3);
+        // An end node has one side: nothing to smooth.
+        assert_eq!(set_node_type(&p, 0, NodeType::Smooth), normalize(&p));
+        assert_eq!(set_node_type(&p, 2, NodeType::Smooth), normalize(&p));
+    }
+
+    #[test]
+    fn smoothing_beside_a_closing_line_lines_up_with_it() {
+        // A curve arrives at (5, 10); the close goes straight back to (0, 0).
+        let mut p = BezPath::new();
+        p.move_to((0.0, 0.0));
+        p.line_to((10.0, 0.0));
+        p.curve_to((12.0, 6.0), (9.0, 10.0), (5.0, 10.0));
+        p.close_path();
+        let s = set_node_type(&p, 2, NodeType::Smooth);
+        let PathEl::CurveTo(_, c2, _) = s.elements()[2] else {
+            panic!("{s:?}");
+        };
+        // The handle points away from (0, 0), through (5, 10).
+        let away = (Point::new(5.0, 10.0) - Point::new(0.0, 0.0)).normalize();
+        let h = (c2 - Point::new(5.0, 10.0)).normalize();
+        assert!((h - away).hypot() < 1e-9, "{c2:?}");
+        assert!(matches!(s.elements()[3], PathEl::ClosePath));
+        // The start, with the closing line arriving and a line leaving:
+        // the close stays a close, the line out becomes a curve.
+        let t = set_node_type(&p, 0, NodeType::Smooth);
+        assert!(matches!(t.elements()[1], PathEl::CurveTo(..)));
+        assert!(matches!(t.elements()[3], PathEl::ClosePath));
+        assert_eq!(t.elements().len(), p.elements().len());
+    }
+
+    /// The segment ending at each node: its own, the closing one for the
+    /// start of a closed curve, none for the start of an open one (#1326).
+    #[test]
+    fn the_segment_into_a_node() {
+        let mut open = BezPath::new();
+        open.move_to((0.0, 0.0));
+        open.line_to((10.0, 0.0));
+        open.line_to((10.0, 10.0));
+        assert_eq!(segment_into(&open, 0), None);
+        assert_eq!(segment_into(&open, 2), Some(2));
+        assert_eq!(segment_into(&open, 7), None);
+        let mut closed = open.clone();
+        closed.close_path();
+        assert_eq!(segment_into(&closed, 0), Some(3), "the closing line");
+        let mut twin = open.clone();
+        twin.line_to((0.0, 0.0));
+        twin.close_path();
+        assert_eq!(segment_into(&twin, 0), Some(3), "the last segment");
+    }
+}

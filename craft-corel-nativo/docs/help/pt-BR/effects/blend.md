@@ -1,0 +1,94 @@
+# Misturas
+
+> *Tradução automática: esta página pode estar atrasada em relação à versão em inglês.*
+
+Uma mistura desenha uma série de passos intermediários entre dois objetos,
+mudando forma, tamanho e cor de um para o outro. Use-a para sombreamentos
+suaves, padrões repetidos ou uma forma que se transforma em outra.
+
+## Para misturar dois objetos {#create}
+
+Com a ferramenta:
+
+1. Escolha a ferramenta [[tool.blend]] no submenu Efeitos.
+2. Arraste do objeto inicial até o objeto final.
+
+Com o painel:
+
+1. Selecione dois objetos.
+2. Abra o painel [[docker.blend]] com [[menu.effects > menu.effects.blend]]
+   (<kbd>Ctrl+F8</kbd>).
+3. Defina as opções e clique em [[docker.apply]].
+
+![O painel Mistura](../../img/effects-blend.png)
+
+Os dois objetos continuam sendo objetos do desenho: mova, redimensione ou mude a
+cor de qualquer um e os passos acompanham. Excluir o objeto final remove a
+mistura.
+
+## Configurações da mistura {#settings}
+
+Com uma mistura selecionada, toda alteração na barra de propriedades ou no
+painel vale na hora.
+
+- [[docker.blend_by_steps]]: o número de passos (5 de início, até 999).
+- **Espaçamento**, para uma mistura em um caminho: a distância entre os passos;
+  o número de passos sai do comprimento do caminho.
+- **Rotação**: gira os passos progressivamente; **Laço** os gira em volta do
+  meio entre os dois objetos.
+- **Aceleração**: o controle de objeto faz os passos se concentrarem perto de
+  uma ponta; o de cor faz o mesmo com as cores.
+  [[docker.blend_apply_sizing]] faz a aceleração de objeto mudar também os
+  tamanhos, e [[docker.blend_link_accel]] mantém os dois controles juntos.
+  **Redefinir** devolve os dois ao equilíbrio.
+- [[docker.blend_color_blend]]: [[docker.blend_direct]] (direto de uma cor à
+  outra), [[docker.blend_clockwise]] ou [[docker.blend_counterclockwise]] (pela
+  roda de cores).
+
+A barra de propriedades da ferramenta tem os passos, a rotação e as duas
+acelerações.
+
+### Controles na tela {#canvas-controls}
+
+Escolha uma mistura com a ferramenta [[tool.blend]] (clique no objeto inicial
+ou final, ou em um passo) para mostrar os controles: um quadrado no objeto
+inicial, um quadrado cruzado no final, a linha entre eles e dois controles
+deslizantes nela, a aceleração dos objetos em cima e a das cores embaixo.
+
+- Arraste um controle para o início ou o fim para juntar ali os passos ou as
+  cores. A mistura acompanha ao vivo, cada arraste é um passo de desfazer, e
+  a barra de propriedades acompanha. O controle vai tão longe para um lado
+  quanto para o outro: em 100 % o passo do meio fica junto ao objeto inicial,
+  em -100 % junto ao objeto final.
+- Arraste um quadrado da ponta para mover o objeto dele, e a mistura muda de
+  direção. Solte-o sobre outro objeto para torná-lo o novo início ou fim, com
+  as configurações da mistura.
+
+A aceleração dos objetos move os passos para uma ponta também quando a mistura
+não segue um caminho. Um efeito de bitmap no objeto inicial mantém a mistura
+desenhada.
+
+## Misturar ao longo de um caminho {#path}
+
+1. Selecione a mistura.
+2. Clique em **Novo caminho** no painel [[docker.blend]] e clique em uma curva.
+
+Os passos seguem a curva. **Girar todos os objetos** gira cada passo ao longo da
+curva, e [[docker.blend_full_path]] coloca o primeiro e o último passo nas
+pontas da curva.
+
+## Remover ou separar uma mistura {#clear}
+
+**Limpar mistura** remove os passos e deixa os dois objetos. **Separar**
+transforma os passos em objetos próprios.
+Os passos saem agrupados ao lado do objeto. [[menu.object > menu.object.break_blend_apart]] (<kbd>Ctrl+K</kbd>, também no
+menu do botão direito) faz o mesmo.
+
+## Salvar como `.cdr` {#cdr}
+
+Uma mistura salva como `.cdr` (versão 9 ou posterior) continua sendo uma mistura: o arquivo
+guarda os dois objetos e o registro da mistura entre eles, então o programa
+que abre o arquivo mostra os passos e deixa mudar a mistura. Os passos, o
+espaçamento e os dois objetos vão para o arquivo; aceleração, rotação, um caminho e a
+direção da cor voltam no TraceDraw (versão 14 ou posterior); outros programas começam
+com os seus padrões.

@@ -1,0 +1,56 @@
+name: merged-work
+
+# A pull request must not undo work that is already merged, nor drop
+# tests, without saying so (scripts/ci/check_merged_work.py; the rule is
+# in CONTRIBUTING.md, "Pull requests"). It runs again when the
+# description is edited, so a "Replaces:" or "Removed tests:" line added
+# later is seen.
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, edited]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: merged-work-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  merged-work:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          # git blame needs the whole history.
+          fetch-depth: 0
+
+      - name: Self-test of the check
+        run: python3 scripts/ci/test_check_merged_work.py
+
+      # The description, base and head come from the event payload. The
+      # check runs as the base branch has it, so a pull request cannot
+      # loosen the check it is held to (its own copy only while the base
+      # has none).
+      - name: Merged work and tests stay
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          script=scripts/ci/check_merged_work.py
+          if git cat-file -e "$BASE_SHA:$script" 2>/dev/null; then
+            git show "$BASE_SHA:$script" > "$RUNNER_TEMP/check_merged_work.py"
+            script="$RUNNER_TEMP/check_merged_work.py"
+          fi
+          set +e
+          python3 "$script" --event "$GITHUB_EVENT_PATH" --repo "$GITHUB_REPOSITORY" | tee "$RUNNER_TEMP/merged-work.txt"
+          status=${PIPESTATUS[0]}
+          {
+            echo '### Merged work and tests'
+            echo '```'
+            cat "$RUNNER_TEMP/merged-work.txt"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit "$status"

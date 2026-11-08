@@ -1,0 +1,422 @@
+# Browser version
+
+The same editor compiled to WebAssembly (`wasm32-unknown-unknown`) and
+drawn with WebGL 2 by eframe, so TraceDraw runs in a browser with nothing
+to install. CI publishes it to GitHub Pages; it is not one of the
+release downloads. Each run keeps the folder as the `web-site` artifact
+(`tracedraw-<version>-web.zip`, a static folder: serve it from any web
+server; opening `index.html` from disk does not work because browsers
+refuse to load modules from `file://`).
+
+## What differs from the desktop
+
+| Feature | Desktop | Browser |
+|---|---|---|
+| Open, Import, scripts, palettes, CSV, ICC profiles, thesaurus | system file dialog | the browser's file picker; the file is read into memory under `/upload/<name>` and opened from there |
+| Save, Save As | the Save Drawing dialog with folders, name, type, `.cdr` version and properties (`files.md`) | the same dialog without folders (name, type, version, properties), then a download under that name |
+| Export, Export as PDF, Save as Template, palette and script saves | system save dialog | a download named after the document |
+| Print | PDF opened in the system viewer | PDF downloaded; print it from the browser's viewer |
+| Send To | PDF written to Desktop, Documents or a mail folder | PDF downloaded |
+| Edit Bitmap (external editor) | system image editor | not available (a browser cannot hand files to programs) |
+| Settings | `settings.json` in the configuration folder, saved as they change | browser local storage (key `tracedraw.settings`), saved as they change: they stay in that browser on that computer, until its site data is cleared (see Storage below) |
+| Shelf | `shelf.json` in the configuration folder | the page's IndexedDB database `tracedraw-kept` (see Storage below) |
+| Auto-backup and session recovery | backups and session markers in the auto-backup folder (`recovery.md`) | backups in the page's IndexedDB database and markers in its local storage; leaving the page with unsaved drawings asks first (`recovery.md`, "In the browser") |
+| Recent documents | listed on the Welcome screen | not recorded (uploads have no path to reopen) |
+| Fonts | installed system fonts | bundled at build time: Liberation Sans, Serif and Mono, DejaVu Sans, Noto Sans Devanagari and Bengali; the published page's font folder adds about a hundred free families (stand-ins of the same widths for common office faces, popular families, Chinese, Japanese, Korean, Arabic, Hebrew and Thai) and its font catalog every other family of the google/fonts collection (about 2,000), each fetched the first time a drawing's text needs it or a font list's pointer rests on it (see `web/FONTS.md`); Chinese and Japanese UI text needs a font the build machine had. A font added with Font Manager > Add Font is kept in the page's IndexedDB (`tracedraw-fonts`) and installed again at the next visit (#1400) |
+| System clipboard | text, images and copied files (arboard) | Ctrl+V takes text, pictures and files copied in other programs from the browser's paste event; Edit > Paste reads the clipboard with the browser's clipboard API, which asks once for permission, and pastes the copy made here when the browser refuses (see `clipboard.md`) |
+| Help links | system browser | a new tab |
+| Folder buttons | the system's folder dialog | see "Folder buttons" below (#1399) |
+| Pen pressure | Windows, X11 and macOS (`pen-pressure.md`) | a pen's pointer event `pressure` (Chromium, Firefox, Safari); see "Pen" below (#1410) |
+
+## Folder buttons
+
+A browser and the Android app cannot pick a folder, so no button there
+shows a folder dialog: each asks `files::FolderUse::action` what to do
+on the running platform, and the folder dialog (`files::pick_folder`)
+takes a token only the desktop's answer carries
+(`files::tests::folder_buttons_pick_a_folder_on_the_desktop_only`,
+`no_dialog_picks_a_folder_without_asking_the_platform`). Every button
+that does something else says why in its tip.
+
+| Button | Desktop | Browser | Android |
+|---|---|---|---|
+| Export docker, Browse and Export | picks the folder the assets go to | one zip file named after the drawing (`<name>.zip`, each asset in a folder of that name), downloaded; the folder row says so | the same zip file, where the system's save picker says |
+| File > Package, Browse | picks the folder | greyed with the reason (File > Package is greyed, #1416) | no folder row: the package is one zip file the save picker places (#1401) |
+| Font Manager, Add Folder | picks a folder of fonts | picks several font files at once, each added as Add Font adds one | the same |
+| Print Merge, Pictures folder | picks the folder | picks several pictures at once, kept together as the pictures folder (the docker shows how many) | the system's folder picker (`ACTION_OPEN_DOCUMENT_TREE`, #1926): the pictures in the folder chosen (not its subfolders) are copied into the app's temporary folder and kept together as the pictures folder |
+| Picture Mosaic, Browse | picks the library folder | picks several pictures at once as the library | the same |
+| Options > Text > Spelling, More dictionaries, Browse | picks a folder of dictionaries | (the row is not shown; Add Files does it) | picks `.dic` and `.aff` files, added as Add Files adds them |
+| Options > Save, backup folders, Browse | picks the folder | greyed: backups live in the page's storage | greyed: backups stay in the app's folder |
+
+In the browser, the pickers that take several files (`Dialog::pick_files`:
+the buttons above, Add Files for dictionaries) take several at once; they
+took one before.
+
+## Storage
+
+What the browser version keeps between visits lives in the page's
+storage, which the browser may refuse (#1414):
+
+- The shelf goes to an IndexedDB database of its own
+  (`tracedraw-kept`, store `kept`, key `tracedraw-shelf`), which takes
+  far more than local storage, so a shelf of pictures fits. Earlier
+  versions kept it in local storage (key `tracedraw-shelf`): it is
+  read from there when the database has none, and removed from there
+  once the database holds it, which also frees local storage for the
+  settings. The database is read when the page opens; the Shelf docker
+  waits for it (a few milliseconds), and an item added before it was
+  read is kept after the stored ones. A browser without IndexedDB keeps
+  the shelf in local storage as before.
+- The settings and the auto-backups' session markers stay in local
+  storage, the auto-backups in their own database (`tracedraw`).
+- Every write is checked: when the browser refuses one (its quota for
+  the page is full, `QuotaExceededError`, or storage is turned off, as
+  in some private windows), a message says what was not saved (the
+  shelf, the settings or the auto-backup) and why, once per kind and
+  visit, and the status bar repeats its first line. Nothing is lost
+  from the tab: the shelf, the settings and the drawings stay in memory
+  until the tab is closed or reloaded, and the previously stored shelf
+  stays as it was.
+- At the first write to a database the page asks the browser to keep
+  its storage when the disk runs low (`navigator.storage.persist()`):
+  browsers grant it by themselves for an installed app or a site used
+  often, and some ask the user.
+
+## Loading
+
+While the module downloads, the page shows the desktop app's splash
+screen on the grey of the drawing window: the same artwork (`splash.rs`,
+`ui/brand.rs`), name, tagline, copyright and version, with the status
+"Loading TraceDraw: 3.5 of 5.7 MB (61%)" and the progress bar under it
+(the build writes the module's size into the page as `data-wasm-size`
+and the version for `@VERSION@`; without the size the page counts the
+megabytes and the bar creeps towards 90 %). The download fills the bar
+to 90 %, "Preparing the workspace..." the rest while the browser
+finishes compiling the module; the splash goes when the editor is up.
+The page starts the download of the module together with its script
+(`modulepreload` and `preload`) and hands the bytes to the browser as they
+arrive, in a response of the type `application/wasm`, so the browser
+compiles the module while it downloads, not after: the wait after the
+last byte is what is left of the compiling, and a server that sends the
+module with another type makes no difference. Under the
+splash, small: "TraceDraw (alpha): open-source vector editor that opens
+.cdr files. Written in Rust, free under the MIT or Apache-2.0 license.",
+which screens it suits (a desktop browser with a mouse and keyboard; on
+a tablet the Touch workspace; a phone screen is too small for editing)
+and links to the desktop downloads
+(`https://github.com/tracedraw/tracedraw/releases/latest`), the source
+code and the issues. When the editor cannot start, the splash says so,
+its bar turns red and the reason shows under it, with the links.
+
+Once the editor is up, each time the page opens, a message says that
+this is the same Rust program as the desktop app compiled to
+WebAssembly, that a browser is slower (large drawings, heavy effects,
+big files), has only the bundled fonts and opens and saves files by
+upload and download, and that the desktop app runs natively at full
+speed. OK closes it (Enter too, and its close button); Download the
+desktop app opens the latest release
+(`app::tests::the_browser_notice_shows_at_every_visit`). When the
+browser runs on Windows (the navigator's platform or user agent,
+`web_page::windows_platform`), a third button, Get it from the Microsoft
+Store, opens TraceDraw's Store page, and a last paragraph says that the
+Store version may be one or more releases behind the latest download
+because the Store certifies each version first. The macro message
+offers the same buttons
+(`ui::dialogs::desktop_message_tests`).
+Nothing is added to the menu bar, and the Welcome Screen's Get Started
+page leaves out the recent documents a browser cannot keep.
+
+Heavy work is slower than on the desktop because the build is optimised
+for download size (`profile.web`, `opt-level = "s"`), runs on one thread
+(effects, tracing, mosaics and large exports keep the page busy until
+they finish) and a page has less memory than a program.
+
+## Installing on a tablet
+
+The page is an installable web app (#893): a browser that supports web
+apps offers to put it on the home screen or in the app list, and from
+there it opens full screen, without the browser's address bar and tabs,
+with the TraceDraw icon and name, in any orientation. There is no native
+Android or iPadOS program and no app store listing: the installed app is
+the same WebAssembly build, run by the system's browser engine.
+
+- Android tablet (Chrome, Edge, Samsung Internet): open
+  `https://tracedraw.github.io/tracedraw/`, then the browser's menu and
+  "Install app" or "Add to Home screen". Chrome may also show an install
+  bar under the address bar.
+- iPad (Safari): open the page, tap Share, then "Add to Home Screen".
+
+On an iPhone, iPad or Android device the file picker of Open, Import
+and the other dialogs that pick a file lists no extensions: those
+systems' pickers filter by the system's file types, and once the page's
+file input names the extensions it accepts they can grey out every file
+whose extension has no type there (`.cdr`, `.cmx`, `.tdraw`), so a
+drawing could not be chosen (#1311, seen on an iPad; Android browsers
+map the extensions to types the same way, so they get the same picker).
+The page is taken for one when the user agent or platform names an
+iPhone, iPad, iPod or Android, or when it calls itself a Mac with touch
+points (iPadOS); `files::picker_filters_by_type` decides, tested by
+`files::tests::mobile_browsers_pick_without_extension_filters`. Desktop
+browsers (Windows, macOS, Linux, touch laptops included) match the
+extensions themselves and keep the filters; the Android app's own picker
+already asks for every file (`*/*`). A file of a type TraceDraw does not
+open gets the usual message.
+- Desktop (Chrome, Edge): the install icon at the right end of the
+  address bar, or the menu's "Install TraceDraw".
+
+The installed app is offered by the system for `.tdraw`, `.cdr`, `.svg`
+and `.pdf` files (the manifest's `file_handlers`, where the browser
+supports them: Chrome and Edge on the desktop): a file opened with it goes
+to the TraceDraw window already open (`launch_handler` `focus-existing`)
+and opens in a tab of its own (#646). The page reads the files from the
+launch queue into `window.tracedrawLaunched` and sends a
+`tracedraw-launched` event; the editor takes them between frames
+(`web::take_launched_files`), only after such an event, and waits while a
+dialog is up.
+
+Once opened, choose Window > Workspace > Touch for the larger interface
+(`workspaces.md`). The installed app stays at the version it was last
+opened with and starts without a network connection (the font folder's
+families still need one the first time text uses them); a new deploy is
+taken the next time the app starts after every TraceDraw page or window
+has been closed.
+
+How it works: `web/manifest.webmanifest` (name, icons of 192, 256 and
+512 px from `assets/icon/`, standalone display, any orientation, the
+page's grey as the background colour and the splash's dark blue as the
+theme colour, `start_url` and `scope` relative because the site is served
+under a path) is linked from the page, which also carries the mobile
+tags (`viewport-fit=cover`, `theme-color`, `apple-mobile-web-app-capable`,
+`apple-touch-icon`) and keeps the canvas clear of a notch or rounded
+corners with the safe-area insets. `web/sw.js` is a service worker that
+stores the app shell (the page, `tracedraw.js`, `tracedraw_bg.wasm`, the
+manifest and the icons) in a cache named after the version and a digest
+of the page, script and module that the build fills in; it stores all of
+them or none, serves them from that cache only, keeps font folder files
+in a cache of their own once fetched, and leaves every other address
+(the Help pages, `FONTS.md`) to the network. A new deploy changes
+`sw.js`, so the browser installs a new worker with a new cache and drops
+the old one when it takes over; the new worker waits until the old one's
+pages are closed, so a page that is up never gets the new deploy's
+script with the old module or the other way round. The page registers
+the worker after it has loaded, so the module's download comes first;
+served from disk or over plain http away from localhost the page has no
+worker and works as before.
+Checks: `web_page::tests::the_page_is_installable_as_an_app`,
+`web_page::tests::the_builds_install_the_app_files`, and on the built
+site `scripts/web/check_pwa.mjs` (Node, no packages: the module
+validates, the page links the manifest and registers the worker, the
+manifest is JSON with icons of the sizes it gives, the worker is valid
+JavaScript listing files the site holds, no placeholder left), run by CI
+and by `scripts/web/build.sh` when Node is installed. Checked in
+Chromium against a stand-in site served under a path: the worker caches
+the shell with the module's `application/wasm` type, an offline reload
+serves the page, script and module, a Help page is not replaced by the
+shell, and a changed `sw.js` installs a waiting worker that takes over
+with its own cache once the pages close.
+
+## Mouse
+
+A right click during a move, scale, rotation or skew with the Pick tool
+leaves the original and gives the change to a copy, as on the desktop
+(`pick-tool.md`). A browser reports a button pressed while another is
+held as a pointer move, so the editor listens for the browser's own
+mouse event (`web.rs`, `interaction::note_chorded_right_press`) and
+takes it on the next frame; a second press takes the copy back. A
+browser also sends the pointer's release only when its last button
+goes up: the left button let go while the right one is still held
+comes as a mouse event only, which the editor notes
+(`interaction::note_chorded_left_release`) and the raw input hook turns
+into egui's release of the left button
+(`interaction::release_chorded_left`), so the transform ends there with
+its copy instead of keeping the object on the pointer until Esc (#1334,
+`pick_drag_tests::a_left_release_while_the_right_button_is_held_ends_the_drag`).
+The browser's context menu does not open on the canvas.
+
+A browser reports one notch of the mouse wheel as three lines (Firefox)
+or as 100 pixels (Chromium, Safari), where the desktop reports one line
+(or 50 points from a touchpad). Everything that steps with the wheel
+reads it through one notch count (`ui::field::wheel_notch`,
+`ui::field::wheel_steps`), so a notch is one step on every platform:
+the canvas zoom (#1016), number fields, sliders, the Objects docker's
+thumbnail size, a palette's scroll and Ctrl+wheel swatch size, and
+Ctrl+wheel over the toolbars and the toolbox. Parts of a notch from a
+touchpad add up to a browser's notch before they make a step (#1406,
+`ui::field::tests::a_wheel_notch_is_one_step_on_the_desktop_and_in_the_browser`,
+`ui::field::tests::a_browser_wheel_notch_steps_a_field_once`,
+`ui::objects_docker::tests::a_browser_wheel_notch_steps_the_thumbnail_size_once`,
+`ui::palette::tests::a_browser_wheel_notch_steps_a_palette_row_once`).
+
+Plain wheel scrolling of panels (dockers, lists, dialogs, the property
+bar's overflow) goes as far for a browser notch as for a desktop notch:
+40 points. egui turns a browser line into 8 points and a pixel into one,
+so a notch scrolled 24 points in Firefox and 100 in Chromium. At the
+start of each frame the browser's smoothed scroll is scaled by
+`ui::field::web_scroll_scale` of the last wheel event:
+`40 / (3 * line speed)` for lines and `40 / 100` for a pixel event of half
+a notch or more. The scale is kept for the frames the smoothing spreads
+the notch over. A smaller pixel event comes from a touchpad, which keeps
+the distance it reports, as on the desktop, and a page stays the window's
+height. The wheel events themselves are left as they came, so the steps
+above still count browser notches. The canvas zoom divides the scaled
+scroll by the scaled notch, so it still zooms 1.15 per notch (Refs #1406,
+`ui::field::tests::a_browser_notch_is_scaled_to_the_desktop_distance`,
+`ui::field::tests::a_browser_notch_scrolls_as_far_as_a_desktop_notch`).
+
+A drag with the button held, or a finger held down, on the canvas is the
+editor's (a marquee, a move), never the browser's text selection: the
+page and the canvas turn the browser's selection and its long-press
+callout off (`user-select: none`, `-webkit-touch-callout: none` in
+`web/index.html`), as Safari on iPad selected the whole page while
+dragging on the canvas; the loading text stays selectable so an error
+message can be copied (#1654,
+`web_page::tests::a_drag_on_the_page_selects_no_text`).
+
+## Pen
+
+A graphics tablet's pen, or a stylus on a tablet screen, moves the
+pointer and presses its buttons through the browser's mouse events, as
+before, and its pressure now reaches Freehand and Brush Strokes as on
+the desktop (#1410). The patched web layer reads the `pressure` of the
+pen's pointer events (`pointerType` `pen`) and sends it the way the
+desktop's patched windowing layer does, so the same code
+(`pen.rs`) reads it and the tools behave identically
+(`pen-pressure.md`, "In the browser"). Chromium, Firefox and Safari
+report `pressure` for a pen whose system does. The mouse never gives
+pressure (its pointer events say 0.5 while pressed, which means none);
+a pen whose events say a constant 0.5 has no pressure either and draws
+like the mouse. Touch screens keep their touch events' force as before.
+Tilt is not read, and the browser's coalesced events are not used (the
+tools take one point per frame)
+(`pick_drag_tests::a_pen_in_the_browser_sets_the_width`).
+
+## Keyboard
+
+The editor's shortcuts reach the editor instead of the browser: while
+the canvas has the focus, Ctrl (or Cmd) with a letter and the function
+keys F1 to F12 are not passed to the browser, except Ctrl+C, Ctrl+X and
+Ctrl+V (clipboard) and Ctrl+Shift+I (developer tools). Ctrl+R is Repeat,
+as on the desktop, and F5 the Freehand tool, so neither reloads the
+page: use the browser's reload button
+(`web_page::tests::the_browser_keeps_only_the_clipboard_and_developer_keys`).
+Ctrl+1 to Ctrl+9 (selection groups) and Ctrl+PgUp/PgDn (Forward One,
+Back One) are kept from the browser the same way, so they reach the
+editor in browsers that let a page have them instead of switching tabs
+(`web_page::tests::the_editors_tab_keys_and_their_alternatives_are_kept_from_the_browser`).
+
+Some keys stay with the browser whatever the page does (#1409). Every
+browser keeps Ctrl+N, Ctrl+T, Ctrl+W, Ctrl+Shift+T, Ctrl+F4 and Alt+F4;
+some keep Ctrl+PgUp, Ctrl+PgDn and Ctrl+1 to Ctrl+9 (tab switching) or,
+on Linux, Ctrl+Q and Ctrl+Shift+Q (quit). Their commands have keys of
+their own in the browser, shown in the menus, context menus, toolbar
+tips and hints in place of the key the browser keeps, and listed on
+Options > Customization > Commands:
+
+| Key the browser keeps | Command | Use instead |
+|---|---|---|
+| Ctrl+N | New | Alt+Shift+N |
+| Ctrl+T | Text panel | Alt+Shift+X |
+| Ctrl+Shift+T | Edit Text | Alt+Shift+T |
+| Ctrl+W | Refresh Window | Ctrl+F5 |
+| Ctrl+F4 | Close Window | Alt+Shift+W |
+| Ctrl+PgUp, Ctrl+PgDn | Forward One, Back One | Alt+PgUp, Alt+PgDn |
+| Ctrl+Q | Convert to Curves | Alt+Shift+C |
+| Ctrl+Shift+Q | Convert Outline to Object | Alt+Shift+Q |
+| Ctrl+0 to Ctrl+9 | Store selection group | Alt+Shift+0 to Alt+Shift+9 |
+| Alt+F4 | Exit | close the tab |
+
+The table is `shortcuts::BROWSER_KEYS`; see `shortcuts.md`, "In the
+browser". The desktop apps keep their own keys only.
+
+AltGr types its characters (`€ @ [ ] { } \`, the Polish, Czech and
+other letters of many keyboard layouts) in text and in every field.
+Browsers on Windows report AltGr as Ctrl and Alt held together, with the
+`AltGraph` modifier state set: such a key is not kept from the browser,
+so its character reaches the text, and the editor sees neither Ctrl nor
+Alt held for it, so it is no Ctrl shortcut (AltGr+A does not select all,
+AltGr+E does not export), as in the desktop app, where the windowing
+layer does the same (#1408;
+`web_page::tests::characters_typed_with_altgr_are_left_to_the_browser`).
+On Linux and macOS AltGr (Option) never sets Ctrl, and Android keyboards
+report it as the right Alt.
+
+Alt pressed and let go alone does not give the keyboard focus to the
+browser's menu (browsers on Windows and Linux do so otherwise, and the
+editor then gets no keys until the canvas is clicked again), and Alt with
+a letter, a digit or a named key (Alt+F, Alt+Shift+K, Alt+Enter,
+Alt+Left) goes to the editor instead of opening a browser menu or going
+back a page. Alt+drag and Alt+click keep working. Left to the browser and
+the system: AltGr and its characters, the number pad with Alt (Alt+0169
+types ©), dead keys, Alt+Tab, and Option on macOS and iPadOS, which types
+characters there (#1407;
+`web_page::tests::a_lone_alt_never_reaches_the_browser_menu`). The
+desktop apps need none of this: their windows have no system menu bar to
+focus.
+
+## Building
+
+```sh
+rustup target add wasm32-unknown-unknown
+cargo install wasm-bindgen-cli --version 0.2.129   # must match Cargo.lock
+cargo build --target wasm32-unknown-unknown --profile web -p tracedraw
+wasm-bindgen --target web --no-typescript --out-dir site \
+    target/wasm32-unknown-unknown/web/tracedraw.wasm
+# binaryen 133 (https://github.com/WebAssembly/binaryen/releases)
+wasm-opt -Oz --strip-debug --strip-producers \
+    -o site/tracedraw_bg.wasm site/tracedraw_bg.wasm
+cp web/FONTS.md site/
+size=$(wc -c < site/tracedraw_bg.wasm | tr -d ' ')
+sed -e "s/data-wasm-size=\"0\"/data-wasm-size=\"$size\"/" -e "s/@VERSION@/0.4.0/" \
+    web/index.html > site/index.html
+cp assets/icon/tracedraw-256.png site/icon-256.png
+# The installable app: manifest, icons and the service worker, whose
+# cache is named after the version and a digest of the page, script and
+# module (see "Installing on a tablet").
+cp web/manifest.webmanifest site/
+cp assets/icon/tracedraw-192.png site/icon-192.png
+cp assets/icon/tracedraw-512.png site/icon-512.png
+build=$(cat site/index.html site/tracedraw.js site/tracedraw_bg.wasm site/manifest.webmanifest | sha256sum | cut -c1-16)
+sed -e "s/@VERSION@/0.4.0/" -e "s/@BUILD@/$build/" web/sw.js > site/sw.js
+node scripts/web/check_pwa.mjs site   # optional: Node, no packages
+python3 -m http.server -d site 8080   # then open http://localhost:8080
+```
+
+Checks: the page keeps the splash, what it says, its links and the
+elements the module uses, and never says "demo"
+(`web_page::tests::the_loading_page_shows_the_splash_and_says_what_it_is`);
+both builds fill in the module's size and the version
+(`web_page::tests::the_builds_fill_in_the_modules_size_and_the_version`), after
+binaryen's `wasm-opt` has optimised the module for size and dropped its
+name, debug and producer sections (version 133 in CI, from the release
+checked against its SHA-256;
+`web_page::tests::the_builds_shrink_the_module_before_measuring_it`).
+Checked in a browser with a stand-in module: the progress, the start, an
+error with the links kept, on a desktop and a phone-sized window.
+
+`TRACEDRAW_WEB_FONTS` (folders separated by `:`) points the build at the
+fonts to bundle; without it the usual Linux font folders are searched.
+
+The font folder is optional: `python3 web/font_folder.py web/fonts.txt
+site/fonts` builds it (downloading the google/fonts files at the commit
+`web/fonts.txt` pins, or copying them from a checkout with
+`--google-fonts DIR`; the TeX Gyre and DejaVu files come from the
+`fonts-texgyre` and `fonts-dejavu-*` packages). It writes the files, a
+`licences/` folder and `fonts.json`, which maps each family to its files.
+When the page starts it reads `fonts/fonts.json`; the families join the
+font lists, and text that needs one (set in it, set in a family it
+stands in for, or holding letters only it has) asks for it: the page
+fetches its files, the text engine loads them and the page draws again.
+Without the folder the page works with the bundled fonts.
+The font catalog: `python3 web/font_catalog.py web/fonts.txt site/fonts`
+writes `fonts/catalog.json`, every family of the google/fonts collection
+at the commit `web/fonts.txt` pins that the folder does not hold, with the
+paths of its files (from each family's `METADATA.pb`, read through a
+sparse fetch of just those files; `--google-fonts DIR` reads a checkout
+instead). The page reads it with the folder's list and fetches a family's
+files from `https://raw.githubusercontent.com/google/fonts/<commit>/`
+the first time text needs it; a catalog under another address, or not
+at a commit, is ignored, and so are paths that are not plain. Checks:
+`font_folder::tests::the_catalog_reads_plain_paths_under_one_commit`,
+`font_folder::tests::the_catalog_script_and_the_page_agree`.
+`.cargo/config.toml` selects the browser's random number source for
+`getrandom`. `scripts/web/build.sh` runs these steps.

@@ -1,0 +1,339 @@
+<!doctype html><html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Craft Corel · Guía técnica</title><style>
+:root{--ink:#193347;--accent:#087f8c;--line:#dbe4e9;--paper:#fff}
+*{box-sizing:border-box}html{scroll-behavior:smooth}body{margin:0;color:var(--ink);
+background:#f1f5f8;font:16px/1.65 system-ui,-apple-system,'Segoe UI',sans-serif}
+a{color:#076c87;text-underline-offset:3px}header{background:#142e45;color:white;padding:24px 5vw}
+header p{margin:0;letter-spacing:.12em;font-size:12px}main{max-width:1060px;margin:24px auto;
+padding:48px 66px;background:var(--paper);border:1px solid var(--line);border-radius:12px}
+h1{font-size:2.5rem;line-height:1.16;margin:0 0 24px;color:#142e45;max-width:850px}
+h2{font-size:1.65rem;line-height:1.25;margin:52px 0 20px;border-top:3px solid var(--accent);
+padding-top:20px;scroll-margin-top:110px}h3{font-size:1.2rem;color:#087f8c}
+p,li{max-width:85ch}li{margin:6px 0}table{border-collapse:collapse;width:100%;font-size:.92rem;
+margin:24px 0;table-layout:fixed}th{background:#e8f2f4;text-align:left}th,td{border:1px solid
+var(--line);padding:11px 13px;vertical-align:top;overflow-wrap:anywhere}tr:nth-child(even) td{
+background:#f8fafb}code{font:.88em ui-monospace,Consolas,monospace;background:#edf3f5;padding:2px 4px;
+border-radius:3px;overflow-wrap:anywhere}pre{white-space:pre-wrap;overflow-wrap:anywhere;padding:20px;
+background:#edf3f5;border-left:4px solid var(--accent)}pre code{padding:0;background:none}
+.toc{background:#f1f7f8;padding:24px 30px;border-radius:8px;margin:32px 0}.toc ul{margin:0}
+.tools{position:sticky;top:0;background:#fff;border-bottom:1px solid var(--line);padding:12px 5vw;
+z-index:4;display:flex;gap:16px;align-items:center;flex-wrap:wrap}.tools label{font-weight:600}
+input[type=search]{font:inherit;min-width:220px;max-width:80vw;padding:8px 12px;border:1px solid
+#a9becb;border-radius:6px}.count{font-size:13px;color:#526878}.hidden{display:none}
+footer{max-width:1060px;margin:20px auto 50px;padding:0 24px;color:#536678;font-size:13px}
+@media(max-width:700px){main{padding:25px 20px;margin:10px;border-radius:4px}h1{font-size:2rem}
+table{font-size:.8rem}th,td{padding:8px}.tools{position:static}h2{scroll-margin-top:24px}}
+@media print{body{background:white;font:10pt/1.45 sans-serif}.tools,header,footer{display:none}
+main{margin:0;padding:0;max-width:none;border:0}h1{font-size:26pt}h2{font-size:16pt;margin-top:20pt;
+break-after:avoid}p,li{max-width:none}table{font-size:8pt}tr{break-inside:avoid}
+section.hidden{display:block!important}a{color:inherit}.toc{break-after:page}@page{size:A4;margin:18mm}}
+</style></head><body><header><p>CRAFT COREL · DOCUMENTACIÓN</p></header><div class="tools"><label for="search">Buscar en este manual</label><input id="search" type="search" placeholder="Texto, color, capas…" aria-label="Buscar apartados"><span class="count" id="count" role="status" aria-live="polite"></span></div><main><h1 id="craft-corel-guia-tecnica">Craft Corel · Guía técnica</h1>
+<p>Edición del 8 de noviembre de 2026. Arquitectura, automatización y criterios de comprobación de la aplicación independiente basada en TraceDraw.</p>
+<p>La portable 214714 constituye la base de producto comprobada de esta edición. Los resultados se identifican por recorrido y artefacto. El desarrollo posterior de unidades CDR y reglas debe vincularse a su paquete verificado antes de atribuirle esas capacidades. La versión objetivo de una API no identifica el producto original ni demuestra equivalencia completa.</p>
+<div class="toc">
+<ul>
+<li><a href="#1-arquitectura-y-responsabilidades">1. Arquitectura y responsabilidades</a></li>
+<li><a href="#2-distribucion-modular-y-despliegue">2. Distribución modular y despliegue</a></li>
+<li><a href="#3-formatos-y-rutas-de-intercambio">3. Formatos y rutas de intercambio</a></li>
+<li><a href="#4-servidor-mcp-sin-ventana">4. Servidor MCP sin ventana</a></li>
+<li><a href="#5-contratos-de-javascript">5. Contratos de JavaScript</a></li>
+<li><a href="#6-rectangulos-y-macros-vba">6. Rectángulos y macros VBA</a></li>
+<li><a href="#7-unidades-y-reglas-independientes">7. Unidades y reglas independientes</a></li>
+<li><a href="#8-color-perfiles-y-transacciones-de-importacion">8. Color, perfiles y transacciones de importación</a></li>
+<li><a href="#9-transporte-nativo-de-seleccion">9. Transporte nativo de selección</a></li>
+<li><a href="#10-cli-y-diagnosticos">10. CLI y diagnósticos</a></li>
+<li><a href="#11-construccion-y-mantenimiento">11. Construcción y mantenimiento</a></li>
+<li><a href="#12-matriz-de-cobertura-y-criterio-de-cierre">12. Matriz de cobertura y criterio de cierre</a></li>
+<li><a href="#13-referencias-y-documentacion-complementaria">13. Referencias y documentación complementaria</a></li>
+</ul>
+</div>
+<section><h2 id="1-arquitectura-y-responsabilidades">1. Arquitectura y responsabilidades</h2>
+<p>El sistema está escrito en Rust. El modelo y las órdenes pertenecen al núcleo; la interfaz nativa utiliza egui/eframe y existe un destino WebAssembly. La aplicación de escritorio no es un contenedor Electron ni una automatización de una instalación externa.</p>
+<table>
+<thead>
+<tr>
+<th>Componente</th>
+<th>Responsabilidad</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>core</td>
+<td>Documento, geometría, color, recursos, órdenes e historial</td>
+</tr>
+<tr>
+<td>cdr-format</td>
+<td>Contenedores, RIFF, ZIP y registros de formato</td>
+</tr>
+<tr>
+<td>cdr</td>
+<td>Lectura y escritura de contenido CDR y CMX</td>
+</tr>
+<tr>
+<td>io</td>
+<td>TDRAW, importadores y exportadores de intercambio</td>
+</tr>
+<tr>
+<td>render</td>
+<td>Representación CPU y cachés de imagen</td>
+</tr>
+<tr>
+<td>text</td>
+<td>Fuentes, composición y contornos de texto</td>
+</tr>
+<tr>
+<td>tracecut</td>
+<td>Geometría auxiliar de corte y medición</td>
+</tr>
+<tr>
+<td>vba-project / vba</td>
+<td>Proyectos de macros y compilación al motor propio</td>
+</tr>
+<tr>
+<td>aplicación</td>
+<td>Ventana, herramientas, paneles, scripts y servidor MCP</td>
+</tr>
+<tr>
+<td>CLI</td>
+<td>Inspección, conversión y diagnósticos sin interfaz</td>
+</tr>
+</tbody>
+</table>
+<p>La geometría interna se almacena en milímetros. Los tamaños tipográficos pueden expresarse en puntos. Un cambio de unidad de presentación no debe multiplicar ni dividir las coordenadas del modelo.</p>
+<p>La regla de edición es construir una orden y ejecutarla mediante el motor. Un importador prepara recursos, identificadores y políticas antes de confirmar. Las pruebas de transacción distinguen una preparación fallida de una operación parcial que haya creado objetos o consumido identificadores.</p>
+</section><section><h2 id="2-distribucion-modular-y-despliegue">2. Distribución modular y despliegue</h2>
+<p>La distribución portable contiene un lanzador <code>craft-corel.exe</code>, la aplicación en <code>craft-corel-engine.dll</code> y módulos de Rust compilados como DLL reales. La cadena incluye bibliotecas de codificación, núcleo, formato CDR, representación, texto, geometría auxiliar, CDR, IO y macros; además conserva runtimes y avisos de licencia.</p>
+<p>El conjunto documentado se compila con Rust 1.97.0 y una interfaz privada compatible dentro de esa compilación. No intercambie DLL entre paquetes: una extensión <code>.dll</code> o un enlace correcto por sí solos no demuestran que pueda ejecutarse otra combinación.</p>
+<p>El paquete se verifica mediante hashes de archivos, importaciones PE, ejecución real sin ventana y pruebas funcionales sobre el conjunto distribuido. La ausencia de una DLL obligatoria debe producir un error identificable; no se sustituye el motor por una biblioteca vacía.</p>
+<p>Las preferencias portables se guardan junto a la aplicación. Para una prueba aislada utilice una carpeta de paquete nueva y un perfil separado según las herramientas del proyecto. No copie automáticamente configuraciones privadas a una publicación.</p>
+<p>La edición de desarrollo no tiene firma Authenticode propia. Integridad de ZIP, firma, reputación de descarga y detección antivirus son comprobaciones distintas. La publicación del código fuente no equivale a distribuir un instalador firmado.</p>
+<p>Las actualizaciones del proyecto de origen están desactivadas. La fuente alpha actual mantiene el bloqueo en comprobación, descarga, instalación y reinicio; sus controles de interfaz y regresiones se comprueban por separado del mero valor de una constante. No se debe reactivar una actualización de otra distribución para completar DLL faltantes.</p>
+</section><section><h2 id="3-formatos-y-rutas-de-intercambio">3. Formatos y rutas de intercambio</h2>
+<p><code>save</code> conserva documentos: TDRAW o CDR. <code>export</code> crea representaciones o archivos de intercambio. La extensión se comprueba y un formato desconocido debe fallar sin guardar JSON nativo bajo otro nombre.</p>
+<table>
+<thead>
+<tr>
+<th>Ruta</th>
+<th>Salidas o entradas relevantes</th>
+<th>Límite práctico</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Documento propio</td>
+<td>TDRAW</td>
+<td>Conserva el modelo propio; comprobar versión y límites de lectura</td>
+</tr>
+<tr>
+<td>CDR</td>
+<td>Lectura/escritura de versiones implementadas, hasta 27 en el escritor propio</td>
+<td>Cobertura parcial; una versión emitida no certifica compatibilidad externa total</td>
+</tr>
+<tr>
+<td>Vector y página</td>
+<td>SVG/SVGZ, PDF, AI, EPS/PS/PRN, DXF, EMF/WMF, PLT</td>
+<td>Texto, efectos, unidades y páginas varían según formato</td>
+</tr>
+<tr>
+<td>Imágenes</td>
+<td>PNG, JPEG, BMP, TIFF, WebP, GIF; PSD por ruta específica</td>
+<td>Compresión, paleta, alfa, perfiles y capas tienen capacidades diferentes</td>
+</tr>
+<tr>
+<td>Texto</td>
+<td>TXT, RTF, DOCX</td>
+<td>Importación de contenido y estilos implementados, no motor de oficina completo</td>
+</tr>
+<tr>
+<td>CMX</td>
+<td>Importación parcial</td>
+<td>No todos los tipos de relleno, lentes u objetos están cubiertos</td>
+</tr>
+</tbody>
+</table>
+<p>Los códecs rasterizados compartidos aceptan opciones de DPI, calidad y WebP sin pérdida. Deben escribir el formato solicitado y rechazar extensiones desconocidas. Las pruebas decodifican realmente los archivos de salida. El WebP sin pérdida conserva RGBA sin cuantización previa; los casos con calidad 90 y 40 comprueban también colores impares y alfa.</p>
+<p>La conservación de DPI y las dimensiones se comprueban por separado de la validez del códec. El tamaño rasterizado utiliza techo para fracciones físicas reales, con tolerancia numérica estrecha alrededor de enteros para evitar añadir un píxel por error de coma flotante. No se acepta una comparación de apariencia como sustituto de las dimensiones.</p>
+<p>La nueva fuente alpha añade límites de entrada y expansión, con repetición de pruebas todavía en curso al fijar esta edición: lectura general de hasta 512 MiB, texto/JSON nativo y SVGZ expandido hasta 256 MiB; lista de datos CDR hasta 1 MiB y 4.096 nombres; agregado de flujos externos de hasta 3 GiB y presupuestos propios de bloques comprimidos. Son límites de implementación por capa, no una promesa de que cualquier documento inferior a ellos abra completo o resulte seguro. El paquete final y su informe deben confirmar los recorridos ejercitados.</p>
+<p>AI dispone de una modalidad compatible con PDF y otra AI 8 basada en EPS. SVGZ es SVG comprimido. La reimportación de un formato no demuestra que todos los objetos conserven estructura, color o edición; las métricas deben separar archivo válido, tamaño, apariencia y datos.</p>
+</section><section><h2 id="4-servidor-mcp-sin-ventana">4. Servidor MCP sin ventana</h2>
+<p>El ejecutable admite <code>--mcp</code>: JSON-RPC 2.0 por entrada y salida estándar, un mensaje por línea, con negociación MCP. No abra una ventana para ese modo. Configure un cliente con la ruta real de su ejecutable:</p>
+<pre><code class="language-json">{
+  "mcpServers": {
+    "craft-corel": {
+      "command": "C:/CraftCorel/craft-corel.exe",
+      "args": ["--mcp"]
+    }
+  }
+}
+</code></pre>
+<p>Inicie con <code>initialize</code> y consulte <code>tools/list</code> para usar el esquema de ese binario. Los registros deben ir al canal previsto y no contaminar las líneas JSON del protocolo.</p>
+<table>
+<thead>
+<tr>
+<th>Herramienta</th>
+<th>Función</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>open</td>
+<td>Abre una ruta y devuelve información del documento o error real</td>
+</tr>
+<tr>
+<td>new_document</td>
+<td>Crea un documento con tamaño y título opcionales</td>
+</tr>
+<tr>
+<td>save</td>
+<td>Guarda TDRAW/CDR; admite versión CDR cuando procede</td>
+</tr>
+<tr>
+<td>export</td>
+<td>Exporta según extensión y opciones verificadas</td>
+</tr>
+<tr>
+<td>run_script</td>
+<td>Ejecuta JavaScript con modelo explícito o predeterminado</td>
+</tr>
+<tr>
+<td>import</td>
+<td>Incorpora un archivo y devuelve identificadores y aviso</td>
+</tr>
+<tr>
+<td>copy_selection</td>
+<td>Devuelve SVG con selección nativa propia; no usa el portapapeles del SO</td>
+</tr>
+<tr>
+<td>paste_selection</td>
+<td>Recibe SVG ordinario o bloque nativo propio y devuelve selección</td>
+</tr>
+<tr>
+<td>document_info</td>
+<td>Describe páginas, capas, objetos, selección y propiedades</td>
+</tr>
+<tr>
+<td>undo / redo</td>
+<td>Recorre un paso de historial</td>
+</tr>
+</tbody>
+</table>
+<p>Son 11 herramientas contando <code>undo</code> y <code>redo</code> por separado. El modo de puente hacia una ventana abierta existe en la base, pero sus controles visibles y transporte de escritorio no se dan por probados mediante el servidor sin ventana.</p>
+<p><code>export</code> recibe <code>path</code>, <code>page_index</code>, <code>dpi</code>, <code>quality</code>, <code>webp_lossless</code> y, para AI, <code>ai_version</code>. Los valores predeterminados documentados son página 0, 96 DPI, calidad 90 y compresión WebP con pérdida. DPI se limita a 1..2400 y calidad a enteros 1..100. Consulte el esquema real antes de depender de una opción.</p>
+</section><section><h2 id="5-contratos-de-javascript">5. Contratos de JavaScript</h2>
+<p><code>run_script.object_model</code> admite <code>native</code>, predeterminado, y <code>vgcore</code>. Un nombre o tipo desconocido se rechaza antes de evaluar el script, conservando documento, selección, asignador e historial pendiente.</p>
+<p>En <code>native</code>, las longitudes son milímetros y el contrato histórico del rectángulo es posición y dimensiones. En <code>vgcore</code>, las longitudes usan <code>ActiveDocument.Unit</code> y las colecciones siguen convenciones de macros de índice 1.</p>
+<p>Elija <code>object_model: vgcore</code> y envíe este JavaScript en <code>source</code>:</p>
+<pre><code class="language-javascript">ActiveDocument.Unit = cdrMillimeter;
+const s = ActiveLayer.CreateRectangle(10,30,50,10);
+print(s.SizeWidth,s.SizeHeight);
+</code></pre>
+<p>Ese ejemplo produce 40 × 20 en el modelo VG. La misma llamada de cuatro números en <code>native</code> produce 50 × 10. No autodetecte el modelo por el nombre del método ni cambie scripts existentes para resolver una diferencia que procede de mezclar contratos.</p>
+<p>Una ejecución agrupa sus cambios en un paso. Si el programa falla después de órdenes válidas, esas órdenes pueden mantenerse: es el comportamiento propio existente de scripts de usuario. Esto se distingue del rechazo previo de un argumento inválido de la herramienta MCP.</p>
+</section><section><h2 id="6-rectangulos-y-macros-vba">6. Rectángulos y macros VBA</h2>
+<p>Los contratos públicos 27.2 recuperados distinguen tres constructores. <code>CreateRectangle</code> recibe lados <code>Left, Top, Right, Bottom</code> y cuatro porcentajes opcionales. <code>CreateRectangle2</code> recibe posición, anchura, altura y cuatro radios físicos opcionales. <code>CreateRectangleRect</code> recibe un rectángulo y los cuatro radios físicos. Cada opcional parte de 0.</p>
+<p>El orden público es superior izquierda, superior derecha, inferior derecha e inferior izquierda. El núcleo usa otro orden interno y el adaptador remapea las inferiores. <code>Rectangle.MaxRadius</code> es la mitad del lado menor, no el mayor radio previamente asignado.</p>
+<p>La documentación contiene una contradicción editorial sobre el anclaje de <code>CreateRectangle2</code>. El modelo propio conserva su convención inferior izquierda y la etiqueta como tal. La reacción exacta del programa original ante radios negativos, dimensiones invertidas, no finitos o coerciones fraccionarias no se ha ejecutado. Las guardas propias no se presentan como una reproducción de sus errores.</p>
+<p>VBA se analiza y compila al motor JavaScript propio. No se usa una instalación COM del editor de referencia. La compatibilidad de nombres no acredita todos los métodos, parámetros ni comportamientos de un SDK completo.</p>
+<p>Las propiedades <code>Application.Version</code>, <code>VersionMajor</code>, <code>VersionMinor</code> y <code>VersionBuild</code> de la documentación original describen su aplicación; no constituyen una orden para fingir su identidad. La versión propia, el objetivo de API y la versión de formato de archivo deben identificarse por separado.</p>
+</section><section><h2 id="7-unidades-y-reglas-independientes">7. Unidades y reglas independientes</h2>
+<p>La enumeración de automatización tiene identificadores de 0 a 16; 0 es válido y no debe confundirse con ausencia. En el modelo propio se conserva la unidad opcional en <code>Metadata.script_unit</code>, sin alterar geometría interna. TDRAW mantiene esa preferencia entre peticiones y procesos en las pruebas de 214714.</p>
+<p>Las páginas oficiales 27.2 de <code>Rulers.HUnits</code> y <code>Rulers.VUnits</code> dicen que afectan solo a interfaz y no a automatización. La nueva fuente mantiene preferencias opcionales independientes para cada eje. El host comprueba identificadores antes de ordenar; un valor desconocido almacenado se conserva, aunque su lectura de macros deba dar un error explícito.</p>
+<p>La portable 214714 pierde <code>script_unit=3</code> al reabrir un CDR propio, aun conservando la escena. La fuente alpha posterior incorpora una extensión privada versionada para conservar unidad de macros y ejes, todavía pendiente de producto final. RIFF utiliza el bloque propio <code>ccun</code>; ZIP utiliza <code>craft-corel/document-units.json</code>. El vínculo con la configuración mediante FNV detecta obsolescencia accidental: no es una firma criptográfica, una defensa contra manipulación maliciosa ni una prueba de que otro editor lo interprete. No añade una tabla de unidades estándar del formato original 27 y se mantiene diferenciada de la base 214714.</p>
+<p>La investigación MCFG encontró una muestra oficial de formato 21 con configuración de 7.944 bytes y una muestra propia 27 que reutiliza esa plantilla. Una especificación declarativa pública deja comentados sus campos de unidades y advierte de posiciones incorrectas en versiones nuevas. No se interpreta ese dato como confirmación independiente de la estructura de 27.</p>
+<p>Los factores de píxel y cícero difieren entre algunas rutas heredadas de interfaz y macros. La documentación recuperada no decide todos sus factores. No se certifican las 17 conversiones por el mero hecho de conservar sus identificadores.</p>
+</section><section><h2 id="8-color-perfiles-y-transacciones-de-importacion">8. Color, perfiles y transacciones de importación</h2>
+<p>Asignación conserva muestras y cambia calibración. Conversión transforma muestras mediante los perfiles disponibles. Los datos CMYK retenidos, alfa y perfil deben actualizarse o conservarse de manera coherente; los errores no deben aceptar silenciosamente una apariencia incorrecta.</p>
+<p>La importación prepara contenido y recursos antes de una sola transacción. Los identificadores extranjeros de símbolos, estilos, tintas, fuentes y otros recursos se remapean; una referencia del archivo entrante no puede apuntar por accidente a un símbolo ya existente del destino.</p>
+<p>Las pruebas propias cubren tres políticas CMYK, perfiles sintéticos diferenciados, destinos válidos e inválidos y restauración por deshacer/rehacer. Un perfil sintético sirve para distinguir rutas de cálculo, pero no para certificar precisión de impresión. RGB, gris, tintas especiales y todo estilo con color requieren sus propios oráculos.</p>
+<p>La asignación y conversión no deben confundirse con el refresco de la vista previa. Una vista previa PNG puede regenerarse sin cambiar las tintas originales. Una prueba solo de PNG no sustituye el cotejo de todos los bytes de canales y perfiles.</p>
+</section><section><h2 id="9-transporte-nativo-de-seleccion">9. Transporte nativo de selección</h2>
+<p>El formato propio utiliza un bloque versionado dentro del SVG. La decodificación distingue SVG ajeno sin bloque, bloque propio válido y bloque propio dañado. Un bloque propio inválido debe dar error, sin una importación SVG simplificada que pierda datos silenciosamente.</p>
+<p>La validación limita bytes, profundidad, recursos, imágenes y expansión de símbolos antes de deserializar o clonar estructuras grandes. Los límites del modelo y del XML son diferentes: 128 grupos del modelo pueden producir más de 128 antecesores XML en una vista previa real.</p>
+<p>Las pruebas llegaron a 128 grupos con recopia nativa y rechazaron 129 conservando el rehacer anterior. El candidato 205021 falló esa recopia y permanece rechazado; no se le transfiere la aprobación del sucesor. El soporte de pila de trabajadores nativos no modifica la pila principal del ejecutable ni demuestra comportamiento en navegador.</p>
+<p>Las comprobaciones entre procesos usan el mismo formato de bytes del producto, pero no invocan el portapapeles del sistema. La publicación real de Windows y las promesas asíncronas del navegador son verificaciones separadas.</p>
+</section><section><h2 id="10-cli-y-diagnosticos">10. CLI y diagnósticos</h2>
+<p>Cuando se dispone de su binario, <code>craft-corel-cli</code> permite inspeccionar, informar, comprobar y convertir sin ventana. La portable modular de escritorio no debe darse por acompañada del CLI si este no figura en su manifiesto.</p>
+<pre><code class="language-text">craft-corel-cli info dibujo.cdr
+craft-corel-cli inspect dibujo.cdr
+craft-corel-cli check dibujo.cdr
+craft-corel-cli convert dibujo.tdraw salida.svg
+</code></pre>
+<p>La inspección de contenedor y el comprobador de un archivo ayudan a detectar fallos estructurales, pero no sustituyen el render ni la lectura del destinatario. Las pruebas de mutación o estrés deben ejecutarse sobre copias de trabajo y mantener evidencia de entradas y errores.</p>
+<p>Para una incidencia exporte una muestra mínima, anote el modelo de script, las unidades, la versión del paquete y el resultado esperado. Compare imágenes al mismo tamaño y conserve perfiles, fuentes y datos fuente cuando sean necesarios y se puedan compartir legalmente.</p>
+</section><section><h2 id="11-construccion-y-mantenimiento">11. Construcción y mantenimiento</h2>
+<p>La herramienta documentada del trabajo local es Rust 1.97.0. Use un checkout y un directorio de destino separados para experimentos de módulos; no modifique un producto entregado para resolver un enlace. Los scripts de empaquetado y comprobación del espacio de trabajo fijan fuentes, dependencias y artefactos.</p>
+<p>Una verificación razonable de cambios de fuente incluye pruebas focalizadas, las regresiones afectadas y compilación WASM cuando la ruta se comparte. Clippy y compilación son controles útiles, pero no demuestran que la portable distribuida ejecute un flujo de importación o conserve una imagen.</p>
+<p>Cada paquete debe mantener sus avisos de licencia, hashes y procedencia. Las dependencias se cotejan con el lock y los archivos fijados; los suplementos de licencia deben corresponder al grafo concreto. No se transfiere el sello de un paquete anterior por tener el mismo número de bibliotecas.</p>
+<p>La evidencia actual distingue 393 paquetes de grafo de Windows, 379 procedentes del registro y otros locales o vendorizados. Es un resultado del conjunto auditado, no un número universal para todos los destinos o futuras compilaciones.</p>
+</section><section><h2 id="12-matriz-de-cobertura-y-criterio-de-cierre">12. Matriz de cobertura y criterio de cierre</h2>
+<table>
+<thead>
+<tr>
+<th>Área</th>
+<th>Evidencia comprobada</th>
+<th>Lo que no demuestra</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Paquete modular</td>
+<td>Hashes, ZIP, importaciones, carga y pruebas reales sin ventana</td>
+<td>Firma, reputación, GPU o todas las versiones de Windows</td>
+</tr>
+<tr>
+<td>Rectángulos</td>
+<td>Constructores, cuatro radios, control negativo y máscara PNG/CDR propia</td>
+<td>Anclaje original sin contradicción o todos los objetos CDR</td>
+</tr>
+<tr>
+<td>Modelos MCP</td>
+<td>Selector, argumentos inválidos, historial y recorridos propios</td>
+<td>Toda la API VG ni ejecución COM original</td>
+</tr>
+<tr>
+<td>Color CMYK</td>
+<td>Canales/perfiles/alfa en escenarios propios</td>
+<td>Impresión certificada o todas las políticas de color</td>
+</tr>
+<tr>
+<td>Copia nativa</td>
+<td>Bytes entre procesos, recursos y límites</td>
+<td>Portapapeles real del SO o navegador</td>
+</tr>
+<tr>
+<td>Raster y vectores</td>
+<td>Formato real, lecturas y métricas específicas</td>
+<td>Fidelidad universal de tamaño, color, texto y edición</td>
+</tr>
+<tr>
+<td>Fuente WASM</td>
+<td>Comprobación de compilación</td>
+<td>Arranque, fuentes, rendimiento y portapapeles web reales</td>
+</tr>
+<tr>
+<td>Interfaz y hardware</td>
+<td>Capacidades heredadas y pruebas sintéticas o sin ventana</td>
+<td>Recorrido completo de escritorio, lápiz o impresora</td>
+</tr>
+<tr>
+<td>Unidades CDR</td>
+<td>Problema propio observado; conservación privada en validación</td>
+<td>Semántica estándar completa del original 27</td>
+</tr>
+</tbody>
+</table>
+<p>Una fase se cierra únicamente para su alcance demostrado. El objetivo de equivalencia completa sigue abierto. Una prueba de lectura, un código de salida 0, un menú visible o una mejora de velocidad no sustituyen la reproducción completa y su oráculo independiente.</p>
+</section><section><h2 id="13-referencias-y-documentacion-complementaria">13. Referencias y documentación complementaria</h2>
+<p>El repositorio del proyecto es <a href="https://github.com/ecomyseo/craft-corel">ecomyseo/craft-corel</a>. Consulte su revisión y el manifiesto del paquete que utilice; la existencia del repositorio no certifica la descarga de un instalador firmado.</p>
+<p>El repositorio contiene <code>docs/features.md</code>, notas por función en <code>docs/behavior/</code>, las notas de formato <code>docs/cdr-format.md</code> y el registro <code>CLEANROOM.md</code>. Los estados heredados de la base deben leerse junto con las observaciones y límites de esta edición.</p>
+<p>Las fuentes públicas de API consultadas incluyen <a href="https://community.coreldraw.com/sdk/api/draw/27.2/m/layer.createrectangle?lang=vba">CreateRectangle 27.2</a>, <a href="https://community.coreldraw.com/sdk/api/draw/27.2/m/layer.createrectangle2?lang=vba">CreateRectangle2 27.2</a>, <a href="https://community.coreldraw.com/sdk/api/draw/27.2/p/document.unit?lang=vba">Document.Unit</a>, <a href="https://community.coreldraw.com/sdk/api/draw/27.2/p/rulers.hunits?lang=vba">Rulers.HUnits</a> y <a href="https://community.coreldraw.com/sdk/api/draw/27.2/p/rulers.vunits?lang=vba">Rulers.VUnits</a>. Describen contratos públicos; no son pruebas de ejecución local.</p>
+<p>Este documento y el manual de usuario se mantienen cada uno en una fuente Markdown. El generador produce HTML autónomo con índice y búsqueda y PDF con índice enlazado. Los informes de validación registran hashes, extracción textual, dimensiones de página y renders revisados; el HTML no necesita servicios externos ni una conexión para leerse.</p></section></main><footer>Documento autónomo. / abre la búsqueda; Esc la limpia. El PDF procede de la misma fuente de contenido.</footer><script>
+const input=document.querySelector('#search'),counter=document.querySelector('#count');
+const sections=[...document.querySelectorAll('main>section')];
+const normalize=s=>s.normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase();
+function filter(){const q=normalize(input.value.trim());let n=0;for(const s of sections){
+ const show=!q||normalize(s.textContent).includes(q);s.classList.toggle('hidden',!show);n+=show;}
+ counter.textContent=q?`${n} de ${sections.length} apartados`:'Todos los apartados';}
+input.addEventListener('input',filter);document.addEventListener('keydown',e=>{
+ if(e.key==='/'&&document.activeElement!==input){e.preventDefault();input.focus();}
+ if(e.key==='Escape'){input.value='';filter();input.blur();}});filter();
+</script></body></html>

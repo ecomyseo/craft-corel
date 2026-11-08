@@ -1,0 +1,72 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleName</key><string>TraceDraw</string>
+  <key>CFBundleDisplayName</key><string>TraceDraw</string>
+  <key>NSHumanReadableCopyright</key><string>Copyright © 2026 TraceDraw members and contributors</string>
+  <key>CFBundleIdentifier</key><string>dev.tracedraw.app</string>
+  <key>CFBundleVersion</key><string>__VERSION__</string>
+  <key>CFBundleShortVersionString</key><string>__VERSION__</string>
+  <key>CFBundlePackageType</key><string>APPL</string>
+  <key>CFBundleExecutable</key><string>tracedraw</string>
+  <key>CFBundleIconFile</key><string>tracedraw.icns</string>
+  <key>LSMinimumSystemVersion</key><string>11.0</string>
+  <key>NSHighResolutionCapable</key><true/>
+  <!-- Document types name content types, not only extensions: Finder
+       keeps the default program per content type (Get Info, Change All;
+       a double click), and the system already types .cdr as a disk image
+       (com.apple.disk-image-cdr, "DVD/CD-R Master Image"). TraceDraw is
+       an Alternate there, so it never takes the default by itself, but
+       the user can make it the default (#1504). -->
+  <key>CFBundleDocumentTypes</key>
+  <array>
+    <dict>
+      <key>CFBundleTypeName</key><string>TraceDraw Document</string>
+      <key>CFBundleTypeRole</key><string>Editor</string>
+      <key>LSHandlerRank</key><string>Owner</string>
+      <key>LSItemContentTypes</key>
+      <array><string>dev.tracedraw.tdraw</string></array>
+    </dict>
+    <dict>
+      <key>CFBundleTypeName</key><string>CDR Drawing</string>
+      <key>CFBundleTypeRole</key><string>Editor</string>
+      <key>LSHandlerRank</key><string>Alternate</string>
+      <key>LSItemContentTypes</key>
+      <array>
+        <string>com.apple.disk-image-cdr</string>
+        <string>dev.tracedraw.cdr</string>
+      </array>
+    </dict>
+  </array>
+  <key>UTExportedTypeDeclarations</key>
+  <array>
+    <dict>
+      <key>UTTypeIdentifier</key><string>dev.tracedraw.tdraw</string>
+      <key>UTTypeDescription</key><string>TraceDraw Document</string>
+      <key>UTTypeIconFile</key><string>tracedraw.icns</string>
+      <key>UTTypeConformsTo</key>
+      <array><string>public.data</string><string>public.content</string></array>
+      <key>UTTypeTagSpecification</key>
+      <dict>
+        <key>public.filename-extension</key><array><string>tdraw</string></array>
+        <key>public.mime-type</key><array><string>application/x-tdraw</string></array>
+      </dict>
+    </dict>
+  </array>
+  <!-- For systems that do not type .cdr themselves. -->
+  <key>UTImportedTypeDeclarations</key>
+  <array>
+    <dict>
+      <key>UTTypeIdentifier</key><string>dev.tracedraw.cdr</string>
+      <key>UTTypeDescription</key><string>CDR Drawing</string>
+      <key>UTTypeConformsTo</key>
+      <array><string>public.data</string><string>public.content</string></array>
+      <key>UTTypeTagSpecification</key>
+      <dict>
+        <key>public.filename-extension</key><array><string>cdr</string></array>
+      </dict>
+    </dict>
+  </array>
+</dict>
+</plist>

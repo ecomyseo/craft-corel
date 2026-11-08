@@ -1,0 +1,22 @@
+name: Feature request
+description: Something TraceDraw should do and does not yet.
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Check [docs/features.md](https://github.com/tracedraw/tracedraw/blob/main/docs/features.md) first: it lists every capability and its status.
+
+        One feature per request, please. Something that exists but works wrong is a **Bug report**.
+  - type: textarea
+    id: what
+    attributes:
+      label: What you would like to do
+      description: The task, not only the button. How do you work today without it?
+    validations:
+      required: true
+  - type: textarea
+    id: more
+    attributes:
+      label: Anything else
+      description: Sketches, screenshots, sample files.
