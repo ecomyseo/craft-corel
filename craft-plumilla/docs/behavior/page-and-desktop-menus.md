@@ -7,7 +7,9 @@ it falls (the reference has one for each):
   Object; Import; Paste (at the click, external clipboard data included);
   Page Setup (the page size dialog).
 - **On the desktop around the page** (the Document Desktop menu):
-  Full-Screen Preview; View; Create Object; Import; Paste; Paste in View
+  Full-Screen Preview; View; Create Object; Create New Symmetry (an empty
+  symmetry whose vertical mirror line passes through the click, straight
+  into editing it); Import; Paste; Paste in View
   (with something copied); AI Generate (Create Image, Remix Image, Create
   Vector, Draw with Words); Document Properties.
 
@@ -26,9 +28,16 @@ Page, Insert Page After, Insert Page Before, Duplicate Page, Delete Page,
 Switch Page Orientation.
 
 Not here: the reference's Insert Object row places OLE objects, which this
-program does not have; its desktop menu's New Symmetry with nothing
-selected (an empty symmetry to draw into) is pending; the menu with no
-drawing open is pending.
+program does not have.
+
+**Create New Symmetry with nothing selected** (here and in Object >
+Symmetry): what is drawn next joins the symmetry and is mirrored; finished
+while still empty, the symmetry goes. One undo step.
+
+**With no drawing open** (the Welcome Screen's tab closed), a right-click
+on the empty workspace opens the reference's CorelDRAW Desktop menu: New,
+New From Template, Open; View; New Window (greyed without a drawing);
+About.
 
 ## Checks
 
@@ -37,3 +46,6 @@ drawing open is pending.
 - `ui::context::page_desktop_menu_tests::the_desktop_menu_pastes_in_view`
 - `ui::context::page_desktop_menu_tests::the_empty_area_menu_depends_on_where_the_click_falls`
 - `ui::context::page_paste_tests::page_context_paste_accepts_external_data_without_a_local_copy`
+- `ui::context::page_desktop_menu_tests::the_empty_workspace_menu_follows_the_reference`
+- `ops2::tests::a_new_symmetry_with_nothing_selected_takes_what_is_drawn`
+- `pick_drag_tests::mesh_handle_tests::a_right_click_on_the_empty_workspace_opens_its_menu`

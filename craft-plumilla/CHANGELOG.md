@@ -4,6 +4,13 @@ Versions follow the tags of this repository; every push to `main` also
 publishes a nightly build. [`docs/features.md`](docs/features.md) has the
 full, row-by-row status.
 
+## 0.41.1 (2026-11-10)
+
+- The editor is now called Craft Plumilla (it was Craft Corel), so that its name does not use a trademark of another company. Programs, installer, settings folder and links take the new name; preferences of a copy with the old name carry over the first time.
+- With no drawing open (the Welcome Screen's tab closed), a right-click on the workspace offers New, New From Template, Open, View, New Window and About.
+- Create New Symmetry works with nothing selected: an empty symmetry whose mirror line passes through the click (or the middle of the view), into which what is drawn next goes and is mirrored; finished while still empty, it goes.
+- Menu rows that looked enabled and did nothing in some cases are greyed there: Ungroup and Ungroup All without a group, Clear Effect and Flatten without an effect, the clip frame rows without a clip frame. Window > Dockers also closes a docker shown, and Window > Toolbars > Menu Bar hides and shows the menu bar.
+
 ## Unreleased
 
 - Saving .cdr (version 16 and later) with Embed fonts: a drawing whose text uses only the bold face of a font (bold "Khand" text, or regular Khand text drawn by the only Khand file installed, the bold one) no longer lists a regular face of that font too. The file carried a plain record of the regular face and named it in its style table, two references to a face it neither used nor embedded, so the program that reads `.cdr` files could ask for "Khand (Normal)" on a computer where Khand is not installed, although the bold face is in the file. Files that program saves hold a record per face used and name the first of them in the style table, and TraceDraw now writes the same; regular text keeps its record, and files before version 16 are unchanged (#1733, #1009, #1055).

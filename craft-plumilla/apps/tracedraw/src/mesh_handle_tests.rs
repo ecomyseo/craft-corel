@@ -138,3 +138,26 @@ fn mesh_node_handles_bend_the_grid_and_follow_the_node_type() {
     assert_eq!(s.fill, Fill::Mesh(saved));
     let _ = MESH_NODE_BASE;
 }
+
+/// With no drawing open and the Welcome Screen closed, a right-click on
+/// the empty workspace opens its menu (`ui::context::workspace_menu`).
+#[test]
+fn a_right_click_on_the_empty_workspace_opens_its_menu() {
+    let ctx = crate::theme::ui_context();
+    let mut app = App::headless();
+    app.close_all_documents();
+    // The Welcome Screen's tab closed: the empty workspace shows.
+    app.settings.welcome_tab_closed = true;
+    app.show_welcome = false;
+    assert!(!app.has_document());
+    for _ in 0..3 {
+        frame(&ctx, &mut app, Vec::new(), Modifiers::NONE);
+    }
+    assert!(!egui::Popup::is_any_open(&ctx));
+    let p = Pos2::new(800.0, 600.0);
+    frame(&ctx, &mut app, vec![Event::PointerMoved(p)], Modifiers::NONE);
+    frame(&ctx, &mut app, vec![button(p, true, PointerButton::Secondary, Modifiers::NONE)], Modifiers::NONE);
+    frame(&ctx, &mut app, vec![button(p, false, PointerButton::Secondary, Modifiers::NONE)], Modifiers::NONE);
+    frame(&ctx, &mut app, Vec::new(), Modifiers::NONE);
+    assert!(egui::Popup::is_any_open(&ctx), "no menu opened");
+}

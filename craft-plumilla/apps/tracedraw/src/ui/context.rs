@@ -882,6 +882,16 @@ fn desktop_menu(app: &mut App, ui: &mut Ui, p: tracedraw_core::Point, close: &mu
     view_sub(app, ui, close);
     sep(ui);
     create_object_sub(app, ui, close);
+    // An empty symmetry whose mirror line passes through the click.
+    if ci(
+        ui,
+        close,
+        "menu.object.symmetry_create",
+        "Alt+S",
+        app.symmetry_edit.is_none(),
+    ) {
+        app.create_new_symmetry_at(p);
+    }
     if ci(ui, close, "menu.file.import", "Ctrl+I", true) {
         app.import();
     }
@@ -925,6 +935,32 @@ fn desktop_menu(app: &mut App, ui: &mut Ui, p: tracedraw_core::Point, close: &mu
 /// Toolbox, Color Palettes, the Property Bar and Status Bar, Rulers,
 /// Grid, Pixel Grid, Guidelines, Printable Area, the rollovers' Live
 /// Preview and Text Frames.
+/// Right-click on the empty workspace with no drawing open, as the
+/// reference's CorelDRAW Desktop menu: New, New From Template, Open; View;
+/// New Window (greyed without a drawing); About.
+pub(crate) fn workspace_menu(app: &mut App, ui: &mut Ui, close: &mut bool) {
+    if ci(ui, close, "menu.file.new", "Ctrl+N", true) {
+        app.request_new_document();
+    }
+    if ci(ui, close, "menu.file.new_from_template", "", true) {
+        app.open_template_dialog();
+    }
+    if ci(ui, close, "menu.file.open", "Ctrl+O", true) {
+        app.open_dialog();
+    }
+    sep(ui);
+    view_sub(app, ui, close);
+    sep(ui);
+    let doc = app.has_document();
+    if ci(ui, close, "menu.window.new_window", "", doc) {
+        app.new_window();
+    }
+    sep(ui);
+    if ci(ui, close, "menu.help.about", "", true) {
+        app.dialog = Dialog::About;
+    }
+}
+
 fn view_sub(app: &mut App, ui: &mut Ui, close: &mut bool) {
     sub(ui, "menu.view", |ui| {
         if cc(ui, close, "menu.window.toolbar_toolbox", app.show_toolbox) {
@@ -1193,6 +1229,7 @@ mod page_desktop_menu_tests {
             &desktop,
             &[
                 "tool.spiral",
+                "menu.object.symmetry_create",
                 "menu.edit.paste",
                 "menu.object.ai_create_image",
                 "menu.object.ai_draw_words",
@@ -1230,6 +1267,52 @@ mod page_desktop_menu_tests {
         app.dialog = Dialog::None;
         click(&mut app, page_menu, row_of(page_menu, "menu.view.fullscreen_preview"));
         assert!(app.fullscreen_preview);
+    }
+
+    fn empty_app() -> App {
+        let mut app = App::headless();
+        app.close_all_documents();
+        assert!(!app.has_document());
+        app
+    }
+
+    fn workspace(app: &mut App, ui: &mut Ui, _p: Point, close: &mut bool) {
+        workspace_menu(app, ui, close)
+    }
+
+    /// With no drawing open, the workspace menu has the reference's rows
+    /// (New, New From Template, Open; View; New Window, greyed; About),
+    /// and they act.
+    #[test]
+    fn the_empty_workspace_menu_follows_the_reference() {
+        let mut keys = Vec::new();
+        let mut row = 0;
+        loop {
+            let mut app = empty_app();
+            let (hit, rows) = click(&mut app, workspace, row);
+            keys.extend(hit);
+            row += 1;
+            if row >= rows {
+                break;
+            }
+        }
+        in_order(
+            &keys,
+            &[
+                "menu.file.new",
+                "menu.file.new_from_template",
+                "menu.window.toolbar_toolbox",
+                "menu.view.rulers",
+                "menu.help.about",
+            ],
+        );
+        assert!(!keys.iter().any(|k| k == "menu.window.new_window"), "{keys:?}");
+        let mut app = empty_app();
+        click(&mut app, workspace, row_in(workspace, "menu.help.about", empty_app));
+        assert!(matches!(app.dialog, Dialog::About));
+        let mut app = empty_app();
+        click(&mut app, workspace, row_in(workspace, "menu.file.new", empty_app));
+        assert!(app.has_document() || !matches!(app.dialog, Dialog::None));
     }
 
     /// With a copy on the clipboard the desktop menu's Paste in View

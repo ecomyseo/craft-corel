@@ -203,6 +203,10 @@ Con nada seleccionado, el botón derecho abre un menú distinto según dónde se
 
 El submenú **Ver** muestra u oculta con una marca la caja de herramientas, las paletas de color, la barra de propiedades, la barra de estado, las reglas, la cuadrícula, la cuadrícula de píxeles, las líneas guía, el área imprimible, la vista previa de los rollovers y los marcos de texto. **Crear objeto** elige la herramienta con la que dibujar a continuación: Texto, Tabla, Medios artísticos (con sus cinco modos), Bézier, Elipse, Mano alzada, Papel gráfico, Formas comunes, Polígono, Estrella, Rectángulo y Espiral; al final, Nuevo símbolo a partir de la selección.
 
+**Sin ningún dibujo abierto** (con la pestaña de la pantalla de bienvenida cerrada), el botón derecho sobre el espacio de trabajo ofrece Nuevo, Nuevo desde plantilla, Abrir, Ver, Ventana nueva (atenuada mientras no haya dibujo) y Acerca de.
+
+**Crear nueva simetría** funciona también sin nada seleccionado, desde el menú del escritorio o desde **Objeto > Simetría**: crea una simetría vacía cuya línea de reflejo pasa por el punto pulsado (o por el centro de la vista) y entra en su edición. Lo que se dibuja a continuación entra en ella y se refleja; si se termina la edición sin haber dibujado nada, la simetría vacía desaparece.
+
 ### Estilos de objeto desde el botón derecho
 
 En el menú de un objeto, **Estilos de objeto** permite crear un estilo con la selección, aplicar uno existente y, si el objeto ya está vinculado a un estilo:

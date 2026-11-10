@@ -18,22 +18,34 @@
 #ifndef OutDir
   #define OutDir "..\..\dist"
 #endif
+; /DTestBuild: the same installer under another name and identity, to test
+; installing and uninstalling on a computer where Craft Plumilla is
+; installed without touching that installation.
+#ifdef TestBuild
+  #define AppTitle "Craft Plumilla (prueba)"
+  #define AppGuid "{{8D2F6A10-5B3C-4E7E-A1D9-2C4F7B9E6A51}"
+  #define FileTag "-prueba"
+#else
+  #define AppTitle "Craft Plumilla"
+  #define AppGuid "{{3C8E5B21-7A4D-4E19-9C62-5F0B8D1A7E43}"
+  #define FileTag ""
+#endif
 
 [Setup]
-AppId={{3C8E5B21-7A4D-4E19-9C62-5F0B8D1A7E43}
-AppName=Craft Plumilla
+AppId={#AppGuid}
+AppName={#AppTitle}
 AppVersion={#Version}
-AppVerName=Craft Plumilla {#Version}
+AppVerName={#AppTitle} {#Version}
 AppPublisher=Ecom Experts
 AppCopyright=Copyright (c) 2026 Craft Plumilla and TraceDraw contributors
 AppPublisherURL=https://github.com/ecomyseo/craft-plumilla
 AppSupportURL=https://github.com/ecomyseo/craft-plumilla/issues
-DefaultDirName={autopf}\Craft Plumilla
-DefaultGroupName=Craft Plumilla
+DefaultDirName={autopf}\{#AppTitle}
+DefaultGroupName={#AppTitle}
 UninstallDisplayIcon={app}\craft-plumilla.exe
-UninstallDisplayName=Craft Plumilla
+UninstallDisplayName={#AppTitle}
 OutputDir={#OutDir}
-OutputBaseFilename=craft-plumilla-{#Version}-windows-x86_64-setup
+OutputBaseFilename=craft-plumilla-{#Version}-windows-x86_64-setup{#FileTag}
 SetupIconFile=..\..\assets\craft-plumilla\craft-plumilla.ico
 Compression=lzma2/max
 SolidCompression=yes
@@ -71,9 +83,9 @@ Name: "tdraw"; Description: "{cm:AssociateTdraw}"; GroupDescription: "{cm:FileTy
 Source: "{#SrcDir}\*"; DestDir: "{app}"; Excludes: "craft-plumilla-settings,craft-plumilla-settings\*"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
-Name: "{autoprograms}\Craft Plumilla"; Filename: "{app}\craft-plumilla.exe"; WorkingDir: "{app}"
-Name: "{autoprograms}\{cm:Manuals}"; Filename: "{app}\Manuales"
-Name: "{autodesktop}\Craft Plumilla"; Filename: "{app}\craft-plumilla.exe"; WorkingDir: "{app}"; Tasks: desktopicon
+Name: "{autoprograms}\{#AppTitle}"; Filename: "{app}\craft-plumilla.exe"; WorkingDir: "{app}"
+Name: "{autoprograms}\{cm:Manuals}{#FileTag}"; Filename: "{app}\Manuales"
+Name: "{autodesktop}\{#AppTitle}"; Filename: "{app}\craft-plumilla.exe"; WorkingDir: "{app}"; Tasks: desktopicon
 
 [Registry]
 Root: HKA; Subkey: "Software\Classes\.tdraw"; ValueType: string; ValueName: ""; ValueData: "CraftPlumilla.Drawing"; Flags: uninsdeletevalue; Tasks: tdraw

@@ -805,6 +805,37 @@ impl App {
         self.edit_symmetry();
     }
 
+    /// Object > Symmetry > Create New Symmetry with nothing selected (and
+    /// the desktop menu's New Symmetry): an empty symmetry with a vertical
+    /// mirror line through `center`, straight into editing it. What is
+    /// drawn next joins it and is mirrored; finished while still empty, it
+    /// goes. One undo step.
+    pub fn create_new_symmetry_at(&mut self, center: Point) {
+        let Some(layer) = self.active_layer() else {
+            return;
+        };
+        let id = self.engine.new_shape_id();
+        let mut group = Shape::new(id, ShapeKind::Group { children: Vec::new() });
+        group.fill = Fill::None;
+        group.stroke = None;
+        group.effects.push(Effect::Symmetry {
+            center,
+            angle: 90.0,
+            lines: 1,
+        });
+        if let Err(e) = self
+            .engine
+            .run_with_label(&Command::AddShape { layer, shape: group }, "Symmetry")
+        {
+            self.status = e.to_string();
+            return;
+        }
+        self.selection.clear();
+        self.symmetry_edit = Some(id);
+        self.visual_cache.borrow_mut().1.clear();
+        self.status = tr("status.editing_symmetry");
+    }
+
     /// The group added last on the page's layers (the one a Group
     /// command just made).
     fn newest_group(&self) -> Option<ShapeId> {
@@ -929,6 +960,25 @@ impl App {
     /// the object picked inside it while editing stayed selected, so the
     /// next drag moved that object alone, as if inside a group.
     pub fn finish_symmetry_edit(&mut self) {
+        // A new symmetry nothing was drawn into goes.
+        if let Some(id) = self.symmetry_edit {
+            let empty = self
+                .doc()
+                .find_shape(id)
+                .is_some_and(|s| matches!(&s.kind, ShapeKind::Group { children } if children.is_empty()));
+            if empty {
+                if let Err(e) = self.engine.run(&Command::DeleteShapes { shapes: vec![id] }) {
+                    self.status = e.to_string();
+                }
+                self.symmetry_edit = None;
+                self.symmetry_turning = false;
+                self.symmetry_step = None;
+                *self.symmetry_doc.borrow_mut() = None;
+                self.selection.clear();
+                self.status.clear();
+                return;
+            }
+        }
         self.symmetry_turning = false;
         self.symmetry_step = None;
         *self.symmetry_doc.borrow_mut() = None;
@@ -4449,6 +4499,54 @@ pub use crate::fit_path::{
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Create New Symmetry with nothing selected: an empty symmetry to
+    /// draw into; a rectangle drawn then joins it and is mirrored; finished,
+    /// the symmetry is selected and the native file keeps it. Finished
+    /// while still empty, it goes.
+    #[test]
+    fn a_new_symmetry_with_nothing_selected_takes_what_is_drawn() {
+        let mut app = App::headless();
+        let count = |app: &App| app.doc().all_layers().map(|l| l.shapes.len()).sum::<usize>();
+        let n0 = count(&app);
+        app.select(Vec::new());
+        app.create_new_symmetry_at(Point::new(100.0, 100.0));
+        assert!(app.symmetry_edit.is_some());
+        assert_eq!(count(&app), n0 + 1);
+        let r = app
+            .new_shape(ShapeKind::Rect {
+                rect: kurbo::Rect::new(60.0, 80.0, 90.0, 120.0),
+                radius: 0.0,
+                corners: None,
+            })
+            .expect("rect");
+        let sym = app.symmetry_editing().expect("still editing");
+        let group = app.doc().find_shape(sym).expect("symmetry").clone();
+        let ShapeKind::Group { children } = &group.kind else {
+            panic!("not a group: {:?}", group.kind);
+        };
+        assert_eq!(children.iter().map(|c| c.id).collect::<Vec<_>>(), vec![r]);
+        assert!(group.effects.iter().any(
+            |e| matches!(e, Effect::Symmetry { center, .. } if (center.x - 100.0).abs() < 1e-9)
+        ));
+        assert_eq!(count(&app), n0 + 1, "the rectangle went into the symmetry");
+        app.finish_symmetry_edit();
+        assert_eq!(app.selection, vec![sym]);
+        let path = std::env::temp_dir().join(format!("new-symmetry-{}.tdraw", std::process::id()));
+        tracedraw_io::save_native(app.doc(), &path).expect("save");
+        let back = tracedraw_io::load_native(&path).expect("load");
+        let _ = std::fs::remove_file(&path);
+        let kept = back.find_shape(sym).expect("kept");
+        assert!(kept.effects.iter().any(|e| matches!(e, Effect::Symmetry { .. })));
+        // Finished while still empty: it goes.
+        let n1 = count(&app);
+        app.select(Vec::new());
+        app.create_new_symmetry_at(Point::new(50.0, 50.0));
+        assert_eq!(count(&app), n1 + 1);
+        app.finish_symmetry_edit();
+        assert_eq!(count(&app), n1);
+        assert!(app.symmetry_edit.is_none());
+    }
 
     fn symbol_of(app: &mut App, rect: kurbo::Rect) -> ShapeId {
         let a = app

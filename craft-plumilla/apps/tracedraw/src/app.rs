@@ -1699,6 +1699,8 @@ pub struct App {
     /// `palettes`): the Palette Editor does not change them (#1343).
     pub locked_palettes: Vec<usize>,
     pub show_standard_toolbar: bool,
+    /// The menu bar (Window > Toolbars > Menu Bar); for this session.
+    pub show_menu_bar: bool,
     pub show_property_bar: bool,
     pub show_toolbox: bool,
     pub show_text_toolbar: bool,
@@ -2962,6 +2964,7 @@ impl App {
             visible_palettes: vec![0],
             locked_palettes: Vec::new(),
             show_standard_toolbar: true,
+            show_menu_bar: true,
             show_property_bar: true,
             show_toolbox: true,
             show_text_toolbar: false,

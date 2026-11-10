@@ -2134,6 +2134,157 @@ mod tests {
         }
         assert!(hits > 150, "only {hits} menu items were exercised");
     }
+
+    /// What can be seen of the app: the whole window drawn (its texts
+    /// and where its shapes are), the menu `body` drawn (its check
+    /// marks), the drawing, the settings and the dialog.
+    fn visible_state(ctx: &Context, app: &mut App, body: fn(&mut App, &mut Ui)) -> [u64; 7] {
+        use std::hash::{Hash, Hasher};
+        fn shapes(out: &egui::FullOutput, h: &mut impl Hasher) {
+            fn walk(shape: &egui::Shape, h: &mut impl Hasher) {
+                match shape {
+                    egui::Shape::Text(t) => t.galley.text().hash(h),
+                    egui::Shape::Vec(v) => v.iter().for_each(|s| walk(s, h)),
+                    _ => {}
+                }
+                let r = shape.visual_bounding_rect();
+                if r.is_finite() {
+                    for v in [r.min.x, r.min.y, r.max.x, r.max.y] {
+                        ((v * 2.0).round() as i64).hash(h);
+                    }
+                }
+            }
+            out.shapes.len().hash(h);
+            for s in &out.shapes {
+                walk(&s.shape, h);
+            }
+        }
+        let new = std::collections::hash_map::DefaultHasher::new;
+        let mut parts = [0u64; 7];
+        let input = || egui::RawInput {
+            screen_rect: Some(egui::Rect::from_min_size(
+                egui::Pos2::ZERO,
+                egui::vec2(1400.0, 900.0),
+            )),
+            ..Default::default()
+        };
+        // Two frames: the first lays out what the command changed.
+        for i in 0..2 {
+            let mut out = ctx.run_ui(input(), |ui| crate::ui::root(app, ui));
+            if i == 1 {
+                let mut h = new();
+                shapes(&out, &mut h);
+                parts[0] = h.finish();
+            }
+            out.textures_delta.clear();
+        }
+        let mut out = ctx.run_ui(input(), |ui| body(app, ui));
+        let mut h = new();
+        shapes(&out, &mut h);
+        parts[1] = h.finish();
+        out.textures_delta.clear();
+        let one = |s: String| {
+            let mut h = new();
+            s.hash(&mut h);
+            h.finish()
+        };
+        parts[2] = one(format!("{:?}", app.doc()));
+        parts[3] = one(serde_json::to_string(&app.settings).unwrap_or_default());
+        parts[4] = one(format!("{:?}", app.dialog));
+        // What the window shows of the app that is drawn into the page's
+        // picture (a texture, the same shapes either way) or kept in it.
+        parts[5] = one(format!(
+            "{:?}",
+            (
+                (app.show_rulers, app.show_grid, app.show_status_bar, app.show_dockers, app.docker_tab),
+                (app.show_guides, app.show_page_border, app.show_page_shadow, app.show_bleed),
+                (app.show_printable_area, app.show_pixel_grid, app.show_baseline_grid),
+                (app.show_non_printing, app.show_standard_toolbar, app.show_property_bar),
+                (app.show_toolbox, app.show_text_toolbar, app.show_zoom_toolbar),
+                (app.show_transform_toolbar, app.show_left_dockers, app.show_welcome),
+                (app.view, app.snap, app.window_layout, app.multipage, app.page_sorter),
+                (app.mask_outside_page, app.fullscreen_preview, app.rollover_live, app.tool),
+                (&app.selection, app.docs.len(), app.active_doc, app.page, &app.status),
+                (app.symmetry_edit, app.clipboard.is_some(), app.show_menu_bar),
+            )
+        ));
+        // Pages and files handed to the system (help pages, the browser).
+        parts[6] = crate::export::OPENED_IN_TESTS.with(|o| o.borrow().len() as u64);
+        parts
+    }
+
+    /// Commands that are enabled in the test drawing and rightly change
+    /// nothing there, with why: the state they set is the one it has, or
+    /// the drawing has nothing for them. Kept short and explained: a row
+    /// that never does anything does not belong here.
+    const NOTHING_TO_CHANGE: &[(&str, &str)] = &[
+        ("menu.file.acquire_wia", "WIA is already the chosen source"),
+        ("menu.edit.paste", "the test clipboard is empty"),
+        ("menu.edit.select_all_objects", "everything is selected already"),
+        ("menu.view.enhanced", "Enhanced is already the view"),
+        ("menu.layout.page_number_even", "a drawing of one page has no even page"),
+        ("menu.layout.page_spacing_30", "30 mm is already the spacing"),
+        ("menu.object.clear_transformations", "nothing in the drawing is transformed"),
+        ("menu.object.unlock_all", "nothing in the drawing is locked"),
+        ("menu.text.straighten_text", "the text has no shifted or turned characters"),
+        ("menu.text.align_to_baseline", "the text has no shifted characters"),
+        ("menu.window.refresh_window", "it draws again what is drawn"),
+        ("menu.window.workspace_default", "Default is already the workspace"),
+        ("bars.reset", "the bars are where they start"),
+        ("palette.default_cmyk", "the only palette shown; Window > Toolbars > Color Palette hides it"),
+    ];
+
+    /// Every enabled menu command changes something that can be seen:
+    /// the window, the menu's own marks, the drawing, the settings or a
+    /// dialog. A command that changes nothing at all is a row that only
+    /// looks like it works.
+    #[test]
+    fn every_menu_item_has_a_visible_effect() {
+        let ctx = crate::theme::ui_context();
+        let mut silent = Vec::new();
+        let mut measured = 0usize;
+        for (name, body) in menus() {
+            let mut app = mixed_app();
+            app.select_all();
+            // Parts that change between two drawings with nothing done
+            // (an animation) are left out of this menu's comparison.
+            let a = visible_state(&ctx, &mut app, body);
+            let b = visible_state(&ctx, &mut app, body);
+            let steady: Vec<usize> = (0..7).filter(|i| a[*i] == b[*i]).collect();
+            if steady.len() < 7 {
+                println!("{name}: unsteady parts {:?}", (0..7).filter(|i| a[*i] != b[*i]).collect::<Vec<_>>());
+            }
+            assert!(steady.contains(&2) && steady.contains(&3), "{name}: drawing or settings unsteady");
+            let same = |x: &[u64; 7], y: &[u64; 7]| steady.iter().all(|i| x[*i] == y[*i]);
+            let mut target = 0usize;
+            loop {
+                let mut app = mixed_app();
+                app.select_all();
+                let before = visible_state(&ctx, &mut app, body);
+                replay::start(target);
+                run_frame(&ctx, |ui| body(&mut app, ui));
+                let (hit, rows) = replay::finish();
+                if let Some(key) = &hit {
+                    measured += 1;
+                    if same(&visible_state(&ctx, &mut app, body), &before)
+                        && !NOTHING_TO_CHANGE.iter().any(|(k, _)| k == key)
+                    {
+                        silent.push(format!("{name}: {key}"));
+                    }
+                }
+                target += 1;
+                if target >= rows {
+                    break;
+                }
+            }
+        }
+        println!("{measured} commands measured, {} silent", silent.len());
+        for s in &silent {
+            println!("SILENT {s}");
+        }
+        assert!(measured > 150, "only {measured} menu items were measured");
+        assert!(silent.is_empty(), "{} commands without a visible effect", silent.len());
+    }
 }
 
 /// Menu bar titles: size and spacing (about 25 px between titles, the
@@ -3159,7 +3310,7 @@ fn object_menu(app: &mut App, ui: &mut Ui) {
             .iter()
             .filter(|s| matches!(s.kind, ShapeKind::ClipFrame { .. }))
             .all(|s| app.clip_frame_locked(s.id));
-        if check(ui, "menu.object.clip_frame_lock", "", is_clip && locked) && is_clip {
+        if check_if(ui, "menu.object.clip_frame_lock", "", is_clip && locked, is_clip) {
             app.toggle_clip_frame_lock();
         }
         let masks: Vec<_> = app
@@ -3169,11 +3320,11 @@ fn object_menu(app: &mut App, ui: &mut Ui) {
             .map(|s| s.opacity_mask)
             .collect();
         let masked = !masks.is_empty() && masks.iter().all(|m| m.is_some());
-        if check(ui, "menu.object.clip_frame_opacity_mask", "", masked) && is_clip {
+        if check_if(ui, "menu.object.clip_frame_opacity_mask", "", masked, is_clip) {
             app.set_opacity_masks(!masked, false);
         }
         let inverted = masked && masks.iter().all(|m| m.is_some_and(|m| m.invert));
-        if check(ui, "menu.object.clip_frame_invert_mask", "", inverted) && masked {
+        if check_if(ui, "menu.object.clip_frame_invert_mask", "", inverted, masked) {
             app.set_opacity_masks(true, !inverted);
         }
     });
@@ -3184,9 +3335,15 @@ fn object_menu(app: &mut App, ui: &mut Ui) {
             ui,
             "menu.object.symmetry_create",
             "Alt+S",
-            has && !has_sym && !editing,
+            !has_sym && !editing,
         ) {
-            app.create_symmetry();
+            // With nothing selected, an empty symmetry to draw into.
+            if has {
+                app.create_symmetry();
+            } else {
+                let center = app.view_center();
+                app.create_new_symmetry_at(center);
+            }
         }
         if item(
             ui,
@@ -3301,7 +3458,8 @@ fn object_menu(app: &mut App, ui: &mut Ui) {
             app.status = tr("status.click_source_object");
         }
     });
-    if item(ui, "menu.object.clear_effect", "", has) {
+    let with_effects = app.selected_shapes().iter().any(|s| !s.effects.is_empty());
+    if item(ui, "menu.object.clear_effect", "", with_effects) {
         app.clear_effects();
     }
     sep(ui);
@@ -3380,10 +3538,14 @@ fn object_menu(app: &mut App, ui: &mut Ui) {
         if item(ui, "menu.object.group_group", "Ctrl+G", app.can_group()) {
             app.group_selection();
         }
-        if item(ui, "menu.object.group_ungroup", "Ctrl+U", has) {
+        let groups = app
+            .selected_shapes()
+            .iter()
+            .any(|s| matches!(s.kind, ShapeKind::Group { .. }));
+        if item(ui, "menu.object.group_ungroup", "Ctrl+U", groups) {
             app.ungroup_selection();
         }
-        if item(ui, "menu.object.group_ungroup_all", "", has) {
+        if item(ui, "menu.object.group_ungroup_all", "", groups) {
             app.ungroup_all();
         }
     });
@@ -3541,7 +3703,8 @@ fn effects_menu(app: &mut App, ui: &mut Ui) {
         .selected_shapes()
         .iter()
         .any(|s| matches!(s.kind, ShapeKind::Bitmap { .. }));
-    if item(ui, "menu.effects.flatten", "", has) {
+    let with_effects = app.selected_shapes().iter().any(|s| !s.effects.is_empty());
+    if item(ui, "menu.effects.flatten", "", with_effects) {
         app.flatten_effects();
     }
     sep(ui);
@@ -4170,7 +4333,9 @@ fn tools_menu(app: &mut App, ui: &mut Ui) {
 /// status bar, the Text, Zoom and Transform toolbars and the time
 /// tracker's bar.
 pub(crate) fn toolbars_list(app: &mut App, ui: &mut Ui) {
-    check(ui, "menu.window.toolbar_menu_bar", "", true);
+    if check(ui, "menu.window.toolbar_menu_bar", "", app.show_menu_bar) {
+        app.show_menu_bar = !app.show_menu_bar;
+    }
     if check(
         ui,
         "menu.window.toolbar_standard",
@@ -4303,8 +4468,13 @@ fn window_menu(app: &mut App, ui: &mut Ui) {
     sep(ui);
     sub(ui, "menu.window.dockers", |ui| {
         let row = |ui: &mut Ui, app: &mut App, tab: DockerTab| {
-            if check(ui, tab.key(), tab.shortcut(), app.docker_shown(tab)) {
-                app.open_docker(tab);
+            let shown = app.docker_shown(tab);
+            if check(ui, tab.key(), tab.shortcut(), shown) {
+                if shown {
+                    app.close_docker(tab);
+                } else {
+                    app.open_docker(tab);
+                }
             }
         };
         for (i, group) in DockerTab::MENU_GROUPS.iter().enumerate() {

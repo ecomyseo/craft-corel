@@ -491,18 +491,23 @@ fn root_frame(app: &mut App, ui: &mut Ui) {
         return;
     }
 
-    let menu_bar = Panel::top("menu_bar")
-        .frame(
-            Frame::new()
-                .fill(Tokens::menu_bar())
-                .inner_margin(egui::Margin::symmetric(0, 1)),
-        )
-        .exact_size(24.0)
-        .resizable(false)
-        .show_separator_line(false)
-        .show(ui, |ui| menus::menu_bar(app, ui))
-        .response
-        .rect;
+    // Hidden from Window > Toolbars or the bars' menu, which show it again.
+    let menu_bar = if app.show_menu_bar {
+        Panel::top("menu_bar")
+            .frame(
+                Frame::new()
+                    .fill(Tokens::menu_bar())
+                    .inner_margin(egui::Margin::symmetric(0, 1)),
+            )
+            .exact_size(24.0)
+            .resizable(false)
+            .show_separator_line(false)
+            .show(ui, |ui| menus::menu_bar(app, ui))
+            .response
+            .rect
+    } else {
+        egui::Rect::NOTHING
+    };
     tab_focus::set_menu_bar(&ctx, menu_bar);
     // The bars, where the layout puts them (see bars.rs). Outer panels
     // come first: the status bar (at the very bottom, or right under the
@@ -721,7 +726,20 @@ fn root_frame(app: &mut App, ui: &mut Ui) {
     if !app.has_document() {
         egui::CentralPanel::default()
             .frame(Frame::new().fill(Tokens::panel()))
-            .show(ui, |_| {});
+            .show(ui, |ui| {
+                // Its right-click menu: New, Open, View, About.
+                let rect = ui.max_rect();
+                let r = ui.interact(rect, ui.id().with("empty_workspace"), egui::Sense::click());
+                r.context_menu(|ui| {
+                    crate::ui::menus::body(ui, |ui| {
+                        let mut close = false;
+                        crate::ui::context::workspace_menu(app, ui, &mut close);
+                        if close {
+                            ui.close();
+                        }
+                    })
+                });
+            });
         dialogs::show(app, &ctx);
         return;
     }
