@@ -5,7 +5,7 @@ on:
     branches: [main]
     paths-ignore:
       - '**/*.md'
-      - 'craft-corel-nativo/docs/**'
+      - 'craft-plumilla/docs/**'
   pull_request:
   workflow_dispatch:
 
@@ -21,25 +21,25 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 45
     env:
-      CARGO_BUILD_JOBS: "2"
+      CARGO_BUILD_JOBS: "4"
       CARGO_INCREMENTAL: "0"
       CARGO_PROFILE_DEV_DEBUG: "0"
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
       - name: Isolate test settings
         shell: pwsh
-        run: '"TRACEDRAW_CONFIG_DIR=$env:RUNNER_TEMP/craft-corel-test-config" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8'
+        run: '"TRACEDRAW_CONFIG_DIR=$env:RUNNER_TEMP/craft-plumilla-test-config" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8'
       - name: Check text encoding
-        run: python utiles/verificar-utf8-publicacion.py . --exceptions craft-corel-nativo/docs/encoding-exceptions.json
+        run: python utiles/verificar-utf8-publicacion.py . --exceptions craft-plumilla/docs/encoding-exceptions.json
       - name: Install the pinned toolchain
         run: rustup toolchain install 1.97.0 --profile minimal
       - name: Test the model
-        run: cargo +1.97.0 test --locked --manifest-path craft-corel-nativo/Cargo.toml -p tracedraw-core --lib
+        run: cargo +1.97.0 --config 'profile.dev.package."*".opt-level=0' test --locked --manifest-path craft-plumilla/Cargo.toml -p tracedraw-core --lib
       - name: Test private CDR unit preservation
-        run: cargo +1.97.0 test --locked --manifest-path craft-corel-nativo/Cargo.toml -p tracedraw-cdr --test document_units
+        run: cargo +1.97.0 --config 'profile.dev.package."*".opt-level=0' test --locked --manifest-path craft-plumilla/Cargo.toml -p tracedraw-cdr --test document_units
       - name: Test independent ruler preferences
-        run: cargo +1.97.0 test --locked --manifest-path craft-corel-nativo/Cargo.toml -p craft-corel-nativo --lib document_unit_tests -- --test-threads=1
+        run: cargo +1.97.0 --config 'profile.dev.package."*".opt-level=0' test --locked --manifest-path craft-plumilla/Cargo.toml -p craft-plumilla --lib document_unit_tests -- --test-threads=1
       - name: Test file resource limits
-        run: cargo +1.97.0 test --locked --manifest-path craft-corel-nativo/Cargo.toml -p craft-corel-nativo --lib file_budget_tests -- --test-threads=1
+        run: cargo +1.97.0 --config 'profile.dev.package."*".opt-level=0' test --locked --manifest-path craft-plumilla/Cargo.toml -p craft-plumilla --lib file_budget_tests -- --test-threads=1
       - name: Test local HTTP authentication and bounds
-        run: cargo +1.97.0 test --locked --manifest-path craft-corel-nativo/Cargo.toml -p craft-corel-nativo --lib mcp_link::tests -- --test-threads=1
+        run: cargo +1.97.0 --config 'profile.dev.package."*".opt-level=0' test --locked --manifest-path craft-plumilla/Cargo.toml -p craft-plumilla --lib mcp_link::tests -- --test-threads=1

@@ -17,6 +17,7 @@ ROOT = Path(__file__).resolve().parents[1]
 parser = argparse.ArgumentParser()
 parser.add_argument("--manifest", type=Path, default=ROOT / "evidencias/portable/actual.json")
 parser.add_argument("--expected-tools", type=int, default=8)
+parser.add_argument("--verify-headless-diagnostics", action="store_true")
 args = parser.parse_args()
 state = json.loads(args.manifest.read_text(encoding="utf-8"))
 EVIDENCE = ROOT / "evidencias/portable" / state["version"]
@@ -38,10 +39,10 @@ for row in state["files"]:
 
 profile = OUT / "perfil"
 profile.mkdir()
-shutil.copy2(folder / "craft-corel-settings/settings.json", profile / "settings.json")
+shutil.copy2(folder / "craft-plumilla-settings/settings.json", profile / "settings.json")
 env = dict(os.environ, TRACEDRAW_CONFIG_DIR=str(profile), CRAFT_COREL_CONFIG_DIR=str(profile))
-assert (folder / "craft-corel.exe").stat().st_size < 2 * 1024 * 1024, "El EXE no es el lanzador DLL esperado."
-verified = subprocess.run([str(folder / "craft-corel.exe"), "--verify-runtime"], cwd=folder,
+assert (folder / "craft-plumilla.exe").stat().st_size < 2 * 1024 * 1024, "El EXE no es el lanzador DLL esperado."
+verified = subprocess.run([str(folder / "craft-plumilla.exe"), "--verify-runtime"], cwd=folder,
                           stdin=subprocess.DEVNULL, capture_output=True, text=True, encoding="utf-8",
                           timeout=30, check=True, env=env,
                           creationflags=subprocess.CREATE_NO_WINDOW | subprocess.BELOW_NORMAL_PRIORITY_CLASS)
@@ -49,29 +50,40 @@ assert "ABI 1" in verified.stdout, "El lanzador no confirmó la ABI del motor."
 (OUT / "runtime-verificado.txt").write_text(verified.stdout + verified.stderr, encoding="utf-8")
 negative = OUT / "negativo-sin-motor"
 negative.mkdir()
-launcher = folder / "craft-corel.exe"
+launcher = folder / "craft-plumilla.exe"
 shutil.copy2(launcher, negative / launcher.name)
 assert hashlib.sha256((negative / launcher.name).read_bytes()).hexdigest() == hashlib.sha256(launcher.read_bytes()).hexdigest()
 with pefile.PE(str(launcher), fast_load=True) as pe:
     pe.parse_data_directories(directories=[pefile.DIRECTORY_ENTRY["IMAGE_DIRECTORY_ENTRY_IMPORT"]])
     launcher_imports = [item.dll.decode("ascii") for item in getattr(pe, "DIRECTORY_ENTRY_IMPORT", [])]
-assert "craft-corel-engine.dll" not in {name.lower() for name in launcher_imports}, "El motor debe cargarse por la ruta de verificación explícita."
+assert "craft-plumilla-engine.dll" not in {name.lower() for name in launcher_imports}, "El motor debe cargarse por la ruta de verificación explícita."
 for dependency in launcher_imports:
     if (folder / dependency).is_file():
         shutil.copy2(folder / dependency, negative / dependency)
-assert not (negative / "craft-corel-engine.dll").exists()
+assert not (negative / "craft-plumilla-engine.dll").exists()
 without_engine = subprocess.run([str(negative / launcher.name), "--verify-runtime"], cwd=negative,
                                 stdin=subprocess.DEVNULL, capture_output=True, text=True, encoding="utf-8",
                                 timeout=30, env=env,
                                 creationflags=subprocess.CREATE_NO_WINDOW | subprocess.BELOW_NORMAL_PRIORITY_CLASS)
-assert without_engine.returncode != 0 and "craft-corel-engine.dll" in without_engine.stderr
+assert without_engine.returncode != 0 and "craft-plumilla-engine.dll" in without_engine.stderr
 assert "ABI 1" not in without_engine.stdout
 (OUT / "negativo-sin-motor.json").write_text(json.dumps({
     "launcher_sha256": hashlib.sha256(launcher.read_bytes()).hexdigest(), "engine_absent": True,
     "exit_code": without_engine.returncode, "stdout": without_engine.stdout, "stderr": without_engine.stderr,
     "directory": str(negative), "launcher_imports": launcher_imports,
 }, indent=2, ensure_ascii=False), encoding="utf-8")
-process = subprocess.Popen([str(folder / "craft-corel.exe"), "--mcp"], cwd=folder,
+diagnostic_errors = []
+if args.verify_headless_diagnostics:
+    for flag in ["--profile-export", "--profile-cdr-open"]:
+        result = subprocess.run([str(negative / launcher.name), flag], cwd=negative,
+                                stdin=subprocess.DEVNULL, capture_output=True, text=True, encoding="utf-8",
+                                timeout=5, env=env,
+                                creationflags=subprocess.CREATE_NO_WINDOW | subprocess.BELOW_NORMAL_PRIORITY_CLASS)
+        assert result.returncode != 0 and "craft-plumilla-engine.dll" in result.stderr
+        diagnostic_errors.append({"flag": flag, "exit_code": result.returncode, "stderr": result.stderr})
+    (OUT / "negativos-diagnosticos.json").write_text(
+        json.dumps(diagnostic_errors, indent=2, ensure_ascii=False), encoding="utf-8")
+process = subprocess.Popen([str(folder / "craft-plumilla.exe"), "--mcp"], cwd=folder,
                            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                            text=True, encoding="utf-8", env=env,
                            creationflags=subprocess.CREATE_NO_WINDOW | subprocess.BELOW_NORMAL_PRIORITY_CLASS)
@@ -117,7 +129,7 @@ def count(text):
 
 try:
     initialized = request("initialize", {"protocolVersion": "2024-11-05", "capabilities": {}, "clientInfo": {"name": "portable-verification", "version": "1"}})
-    assert initialized["serverInfo"]["name"] == "craft-corel"
+    assert initialized["serverInfo"]["name"] == "craft-plumilla"
     tools = request("tools/list", {})["tools"]
     assert len(tools) == args.expected_tools
     if args.expected_tools >= 9:
@@ -163,6 +175,7 @@ try:
     report = {"zip_sha256": state["zip_sha256"], "extracted_files_match": True,
               "runtime_abi_verified_after_zip_extraction": True,
               "negative_without_engine_verified": True,
+              "headless_diagnostic_errors": diagnostic_errors,
               "extracted_directory": str(folder), "profile_directory": str(profile),
               "tool_count": len(tools), "expected_tools": args.expected_tools,
               "server": initialized["serverInfo"], "checks": checks,

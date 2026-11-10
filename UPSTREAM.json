@@ -3,6 +3,6 @@
   "base_repository": "https://github.com/tracedraw/tracedraw",
   "base_commit": "189a59113fcb6f5501fd7dec3c1fb8ac302434de",
   "license": "MIT OR Apache-2.0",
-  "modifications": "Craft Corel independent development variant; original notices retained.",
+  "modifications": "Craft Plumilla (formerly Craft Plumilla) independent development variant; original notices retained.",
   "craft_anything": "Auxiliary investigation tool, not the editor source base or an official endorsement."
 }

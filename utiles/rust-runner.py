@@ -16,7 +16,7 @@ log = (ROOT / ".tools" / args.log).resolve()
 if not log.is_relative_to((ROOT / ".tools").resolve()):
     raise SystemExit("El registro debe quedar dentro de .tools.")
 env = dict(os.environ, CARGO_HOME=str(ROOT / ".tools/cargo"), RUSTUP_HOME=str(ROOT / ".tools/rustup"),
-           CARGO_TARGET_DIR=str(ROOT / ".build/craft-corel-nativo"), CARGO_PROFILE_DEV_DEBUG="0",
+           CARGO_TARGET_DIR=str(ROOT / ".build/craft-plumilla"), CARGO_PROFILE_DEV_DEBUG="0",
            CARGO_PROFILE_DEV_OPT_LEVEL="0", CARGO_BUILD_JOBS=args.jobs)
 env["PATH"] = str(ROOT / ".tools/cargo/bin") + os.pathsep + env.get("PATH", "")
 command = [str(ROOT / ".tools/cargo/bin/cargo.exe"), "+1.97.0", *args.arguments]

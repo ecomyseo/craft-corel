@@ -25,14 +25,14 @@ args = parser.parse_args()
 engine = args.engine.resolve(strict=True)
 assert engine.is_relative_to(ROOT)
 fixture_root = args.fixtures or max(
-    (p.parent for p in (ROOT / "evidencias/craft-corel-nativo/importacion-color/generated").glob("file-matrix-*/owned-destination.tdraw")),
+    (p.parent for p in (ROOT / "evidencias/craft-plumilla/importacion-color/generated").glob("file-matrix-*/owned-destination.tdraw")),
     key=lambda p: p.stat().st_mtime,
 )
 fixture_root = fixture_root.resolve(strict=True)
 assert fixture_root.is_relative_to(ROOT)
 oracle = json.loads((fixture_root / "oracles.json").read_text(encoding="utf-8"))
 run = str(time.time_ns())
-evidence_root = (args.evidence_root or ROOT / "evidencias/craft-corel-nativo/importacion-color/mcp").resolve()
+evidence_root = (args.evidence_root or ROOT / "evidencias/craft-plumilla/importacion-color/mcp").resolve()
 assert evidence_root.is_relative_to(ROOT)
 out = evidence_root / run
 out.mkdir(parents=True)

@@ -11,7 +11,7 @@ ROOT = Path(__file__).resolve().parents[1]
 exe = Path(sys.argv[1])
 name = sys.argv[2]
 args = sys.argv[3:]
-environment = dict(os.environ, TRACEDRAW_CONFIG_DIR=str(ROOT / "evidencias/craft-corel-nativo/perfil-mcp"))
+environment = dict(os.environ, TRACEDRAW_CONFIG_DIR=str(ROOT / "evidencias/craft-plumilla/perfil-mcp"))
 process = subprocess.Popen([str(exe), *args], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                            stderr=subprocess.DEVNULL, text=True, encoding="utf-8",
                            env=environment,

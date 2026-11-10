@@ -38,7 +38,7 @@ state["private_link_order"] = order
 state["source_layering_changed_only_in_packaging_snapshot"] = True
 state["build_success"] = False
 state_file.write_text(json.dumps(state, indent=2), encoding="utf-8")
-shutil.copy2(root / "craft-corel-nativo/Cargo.lock", source / "Cargo.lock")
+shutil.copy2(root / "craft-plumilla/Cargo.lock", source / "Cargo.lock")
 if state["unused_external_experiment"]:
     saved_log = source / "discarded-external-experiment.log"
     if not saved_log.exists():

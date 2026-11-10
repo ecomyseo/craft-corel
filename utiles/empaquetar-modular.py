@@ -126,7 +126,7 @@ def collect_cargo_notices(source, supplement_file, scope_file):
                      "registry_notice_files_verified_against_cargo_checksum": registry_files_verified,
                      "repository": package.get("repository"), "files": files, "supplement_provenance": extra.get("provenance")})
     if failures:
-        failure_file = ROOT / "evidencias/craft-corel-nativo/optimizacion/empaquetado/licencias-pendientes.json"
+        failure_file = ROOT / "evidencias/craft-plumilla/optimizacion/empaquetado/licencias-pendientes.json"
         failure_file.write_text(json.dumps({"packages_expected": len(packages), "failures": failures}, indent=2, ensure_ascii=False), encoding="utf-8")
         raise SystemExit("Faltan fuentes o textos legales; consulta " + str(failure_file))
     return {"scope": scope["scope"] if scope else "all_Cargo.lock_packages_including_other_targets_and_dev_dependencies",
@@ -140,7 +140,7 @@ parser.add_argument("--update-current", action="store_true", help="Actualiza el 
 parser.add_argument("--cargo-license-supplement", type=Path)
 parser.add_argument("--cargo-license-scope", type=Path)
 parser.add_argument("--launcher-manifest", type=Path)
-parser.add_argument("--manuals-dir", type=Path, default=ROOT / "craft-corel-nativo/docs/manual-craft-corel")
+parser.add_argument("--manuals-dir", type=Path, default=ROOT / "craft-plumilla/docs/manual-craft-plumilla")
 args = parser.parse_args()
 manuals_source = args.manuals_dir.resolve(strict=True)
 assert manuals_source.is_relative_to(ROOT.resolve()), "Los manuales deben estar dentro del espacio de trabajo."
@@ -163,10 +163,10 @@ rust_lib = toolchain / "lib/rustlib/x86_64-pc-windows-msvc/lib"
 crt = Path("C:/Program/VC/Redist/MSVC/14.44.35112/x64/Microsoft.VC143.CRT")
 search = [BUILD, BUILD / "deps", rust_lib, crt]
 version = "modular-prueba-" + datetime.now().strftime("%Y%m%d-%H%M%S")
-DEST = ROOT / "runtime" / ("craft-corel-" + version)
+DEST = ROOT / "runtime" / ("craft-plumilla-" + version)
 DEST.mkdir(exist_ok=False)
 graph = []
-pending = [(engine, "craft-corel-engine.dll")]
+pending = [(engine, "craft-plumilla-engine.dll")]
 seen = set()
 while pending:
     path, name = pending.pop()
@@ -187,7 +187,7 @@ while pending:
         else:
             known_system = dependency.lower().startswith(("api-ms-win-","ext-ms-win-")) or (Path(os.environ["SystemRoot"]) / "System32" / dependency).is_file()
             assert known_system, "Falta una dependencia: " + dependency
-            assert not dependency.lower().startswith(("tracedraw","std-","craft_corel")), dependency
+            assert not dependency.lower().startswith(("tracedraw","std-","craft_corel","craft_plumilla")), dependency
 expected_modules = []
 for module in state.get("modules", []):
     manifest = tomllib.loads((SOURCE / "crates" / module / "Cargo.toml").read_text(encoding="utf-8"))
@@ -199,23 +199,23 @@ assert len([name for name in seen if name.startswith("tracedraw_")]) >= len(expe
 environment = dict(os.environ,CARGO_HOME=str(ROOT / ".tools/cargo"),RUSTUP_HOME=str(ROOT / ".tools/rustup"))
 launcher_dir = ROOT / ".build/modular/launcher" / version
 launcher_dir.mkdir(parents=True)
-resources = list((BUILD / "build").glob("craft-corel-nativo-*/out/resource.res"))
+resources = list((BUILD / "build").glob("craft-plumilla-*/out/resource.res"))
 assert resources
 resource = max(resources,key=lambda p:p.stat().st_mtime_ns)
 if args.launcher_manifest:
     prior = json.loads(args.launcher_manifest.read_text(encoding="utf-8"))
-    known_launcher = Path(prior["directory"]) / "craft-corel.exe"
-    expected_hash = prior.get("launcher_sha256") or next(row["sha256"] for row in prior["files"] if row["path"] == "craft-corel.exe")
+    known_launcher = Path(prior["directory"]) / "craft-plumilla.exe"
+    expected_hash = prior.get("launcher_sha256") or next(row["sha256"] for row in prior["files"] if row["path"] == "craft-plumilla.exe")
     assert hashlib.sha256(known_launcher.read_bytes()).hexdigest() == expected_hash
     assert prior.get("runtime_abi_verified") is True
     assert prior.get("launcher_source_sha256") == hashlib.sha256((ROOT / "utiles/portable-launcher.rs").read_bytes()).hexdigest()
-    shutil.copy2(known_launcher, launcher_dir / "craft-corel.exe")
+    shutil.copy2(known_launcher, launcher_dir / "craft-plumilla.exe")
 else:
-    subprocess.run([str(ROOT / ".tools/cargo/bin/rustc.exe"),"+1.97.0","--edition=2021","--crate-name","craft_corel_launcher",
+    subprocess.run([str(ROOT / ".tools/cargo/bin/rustc.exe"),"+1.97.0","--edition=2021","--crate-name","craft_plumilla_launcher",
                     str(ROOT / "utiles/portable-launcher.rs"),"-C","opt-level=z","-C","panic=abort","-C","strip=symbols","-C","lto=thin",
-                    "-C","link-arg="+str(resource),"-o",str(launcher_dir / "craft-corel.exe")],check=True,env=environment,
+                    "-C","link-arg="+str(resource),"-o",str(launcher_dir / "craft-plumilla.exe")],check=True,env=environment,
                    stdin=subprocess.DEVNULL,creationflags=subprocess.CREATE_NO_WINDOW | subprocess.BELOW_NORMAL_PRIORITY_CLASS)
-shutil.copy2(launcher_dir / "craft-corel.exe",DEST / "craft-corel.exe")
+shutil.copy2(launcher_dir / "craft-plumilla.exe",DEST / "craft-plumilla.exe")
 for name in ["LICENSE-MIT","LICENSE-APACHE","ATTRIBUTION.md"]:
     shutil.copy2(SOURCE / name,DEST / name)
 (DEST / "Licencias").mkdir()
@@ -238,7 +238,12 @@ for package_index, package in enumerate(cargo_notices["packages"]):
         copied.append({"path": target.relative_to(DEST).as_posix(), "source_relative_path": relative, "bytes": target.stat().st_size,
                        "sha256": hashlib.sha256(target.read_bytes()).hexdigest(), "reason": item["reason"], "origin": item.get("origin")})
     package["files"] = copied
-(DEST / "Licencias/CARGO-NOTICES.json").write_text(json.dumps(cargo_notices, indent=2, ensure_ascii=False), encoding="utf-8")
+# Rutas relativas a la raíz del espacio de trabajo: el paquete no revela las carpetas locales.
+notices_text = json.dumps(cargo_notices, indent=2, ensure_ascii=False)
+for prefix in (str(ROOT) + "\\", str(ROOT) + "/"):
+    notices_text = notices_text.replace(json.dumps(prefix)[1:-1], "")
+assert json.dumps(str(ROOT))[1:-1] not in notices_text, "Quedan rutas locales en CARGO-NOTICES.json."
+(DEST / "Licencias/CARGO-NOTICES.json").write_text(notices_text, encoding="utf-8")
 (DEST / "Licencias/CARGO-ALCANCE.txt").write_text(
     "Este inventario cubre todos los paquetes del grafo de dependencias declarado en\n"
     "CARGO-NOTICES.json, incluidos los componentes de compilación señalados en su alcance.\n"
@@ -258,20 +263,25 @@ for dependency in dependencies:
         if file.is_file() and file.name.upper().startswith(("LICENSE", "COPYING", "NOTICE")):
             shutil.copy2(file, license_dir / file.name)
     assert any(license_dir.iterdir()), "Falta la licencia de " + dependency["name"]
-shutil.copy2(Path(json.loads((ROOT / "evidencias/portable/actual.json").read_text(encoding="utf-8"))["directory"]) / "Licencias/Microsoft-runtime.txt",DEST / "Licencias/Microsoft-runtime.txt")
+notice_manifest_path = args.launcher_manifest or ROOT / "evidencias/portable/actual-modular.json"
+notice_manifest = json.loads(notice_manifest_path.read_text(encoding="utf-8"))
+notice_source = Path(notice_manifest["directory"]) / "Licencias/Microsoft-runtime.txt"
+notice_record = next(row for row in notice_manifest["files"] if row["path"] == "Licencias/Microsoft-runtime.txt")
+assert hashlib.sha256(notice_source.read_bytes()).hexdigest() == notice_record["sha256"], "Cambió el aviso legal del runtime de Microsoft."
+shutil.copy2(notice_source, DEST / "Licencias/Microsoft-runtime.txt")
 (DEST / "Ejemplos").mkdir()
 for suffix in ["svg","cdr"]:
-    shutil.copy2(ROOT / ("ejemplos/craft-corel/Bienvenida." + suffix),DEST / ("Ejemplos/Bienvenida." + suffix))
-(DEST / "craft-corel-settings").mkdir()
-(DEST / "craft-corel-settings/settings.json").write_text(json.dumps({"language":"es","show_splash":False},indent=2),encoding="utf-8")
+    shutil.copy2(ROOT / ("ejemplos/craft-plumilla/Bienvenida." + suffix),DEST / ("Ejemplos/Bienvenida." + suffix))
+(DEST / "craft-plumilla-settings").mkdir()
+(DEST / "craft-plumilla-settings/settings.json").write_text(json.dumps({"language":"es","show_splash":False,"theme":"dark"},indent=2),encoding="utf-8")
 (DEST / "Manuales").mkdir()
 for manual_name in manual_names:
     shutil.copy2(manuals_source / manual_name, DEST / "Manuales" / manual_name)
 (DEST / "LEEME.txt").write_text(
-    "CRAFT COREL: PRUEBA PORTABLE MODULAR\n\nExtrae todo el ZIP y abre craft-corel.exe.\n"
+    "CRAFT PLUMILLA: PRUEBA PORTABLE MODULAR\n\nExtrae todo el ZIP y abre craft-plumilla.exe.\n"
     "Mantén todas las DLL junto al EXE. Cada módulo contiene código real y se ha\n"
     "compilado con el mismo Rust 1.97.0; conserva siempre el conjunto completo\n"
-    "de esta versión. Las preferencias quedan en craft-corel-settings.\n\n"
+    "de esta versión. Las preferencias quedan en craft-plumilla-settings.\n\n"
     "Los manuales de usuario y técnico están en Manuales, en HTML y PDF.\n\n"
     "Compilación de desarrollo para Windows de 64 bits, basada en TraceDraw.\n"
     "Todavía no reproduce todas las herramientas ni verifica compatibilidad\n"
@@ -291,8 +301,8 @@ preflight_prefix = ROOT / ".build/portable-verificacion" / (version + "-" + "9" 
 max_relative_path = max(len((DEST.name + "/" + path.relative_to(DEST).as_posix()).encode("utf-16-le")) // 2 for path in DEST.rglob("*") if path.is_file())
 max_workspace_extraction = max(len(str(preflight_prefix / DEST.name / path.relative_to(DEST)).encode("utf-16-le")) // 2 for path in DEST.rglob("*") if path.is_file())
 assert max_workspace_extraction < 250, "Las rutas del ZIP superan el margen de extracción Windows verificado."
-assert (DEST / "craft-corel.exe").stat().st_size < 2 * 1024 * 1024, "El EXE no es el lanzador DLL esperado."
-verified = subprocess.run([str(DEST / "craft-corel.exe"),"--verify-runtime"],check=True,capture_output=True,timeout=30,
+assert (DEST / "craft-plumilla.exe").stat().st_size < 2 * 1024 * 1024, "El EXE no es el lanzador DLL esperado."
+verified = subprocess.run([str(DEST / "craft-plumilla.exe"),"--verify-runtime"],check=True,capture_output=True,timeout=30,
                           text=True,encoding="utf-8",
                           creationflags=subprocess.CREATE_NO_WINDOW | subprocess.BELOW_NORMAL_PRIORITY_CLASS)
 assert "ABI 1" in verified.stdout, "El lanzador no confirmó la ABI del motor."
@@ -305,9 +315,9 @@ report = {"version":version,"directory":str(DEST),"zip":str(archive),"zip_bytes"
           "runtime_abi_verified":True,"preview":True,"full_equivalence_verified":False,"private_rust_abi":True}
 report["packaging_source"] = str(SOURCE)
 report["runtime_abi_output"] = verified.stdout.strip()
-report["launcher_bytes"] = (DEST / "craft-corel.exe").stat().st_size
+report["launcher_bytes"] = (DEST / "craft-plumilla.exe").stat().st_size
 report["launcher_source_sha256"] = hashlib.sha256((ROOT / "utiles/portable-launcher.rs").read_bytes()).hexdigest()
-report["launcher_sha256"] = hashlib.sha256((DEST / "craft-corel.exe").read_bytes()).hexdigest()
+report["launcher_sha256"] = hashlib.sha256((DEST / "craft-plumilla.exe").read_bytes()).hexdigest()
 report["build_state_file"] = str(state_file)
 report["build_state_sha256"] = state_sha256
 report["core_opt_level"] = state.get("core_opt_level", 0)

@@ -1,0 +1,63 @@
+[package]
+name = "tracedraw-io"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Import/export between the TraceDraw document model and other formats (SVG, native .tdraw)"
+
+[dependencies]
+tracedraw-core.workspace = true
+tracedraw-render.workspace = true
+thiserror.workspace = true
+base64 = "0.22"
+flate2 = "1"
+tiny-skia.workspace = true
+usvg = { version = "0.48", default-features = false }
+lopdf = { version = "0.46", default-features = false }
+roxmltree = "0.21"
+# Text in SVG import: the style sheets of the file (simplecss) and its
+# lengths, colours and font lists (svgtypes); both already come with usvg.
+simplecss = "0.2"
+svgtypes = "0.16"
+# Fonts embedded in PDF files: their tables (ttf-parser) and the subset of
+# glyphs a file uses (subsetter, MIT OR Apache-2.0).
+ttf-parser.workspace = true
+subsetter = "0.2"
+web-time = "1"
+zip.workspace = true
+image = { version = "0.25", default-features = false, features = ["jpeg", "png", "bmp", "gif", "webp", "tiff"] }
+# The same TIFF encoder as the desktop: RGBA and physical resolution tags.
+tiff = "0.11"
+png = "0.18"
+jpeg-encoder = "0.6.1"
+zune-jpeg = "0.5.15"
+zune-core = "0.5.3"
+# PDF password protection (AES-256, revision 6) and its random keys;
+# reading protected files also needs RC4 keys made with MD5.
+aes = "0.8"
+cbc = "0.1"
+sha2 = "0.10"
+md5 = { package = "md-5", version = "0.10" }
+getrandom = "0.3"
+
+# Random numbers in a browser come from JavaScript. Our own keys use
+# getrandom 0.3 (see .cargo/config.toml for the matching cfg); lopdf 0.46
+# draws its own through getrandom 0.4, which only needs the feature.
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+getrandom = { version = "0.3", features = ["wasm_js"] }
+getrandom04 = { package = "getrandom", version = "0.4", features = ["wasm_js"] }
+# Lossy WebP on the web, using the existing pure-Rust codec (MIT OR Apache-2.0).
+vaam_webp = { package = "vaam-image-webp", version = "0.1" }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+# The existing desktop WebP codec (BSD-3-Clause); no UI dependency.
+webp = { version = "0.3", default-features = false }
+
+[dev-dependencies]
+# The round trip of Hindi through a PDF lays text out with the real text
+# engine (tests/devanagari_pdf.rs); the library itself does not use it.
+tracedraw-text.workspace = true
+# CMYK test profiles for the PDF/X output intent tests.
+tracedraw-core = { workspace = true, features = ["test-profiles"] }
+# Exercise the web encoder natively as well.
+vaam_webp = { package = "vaam-image-webp", version = "0.1" }

@@ -13,11 +13,14 @@ import tomllib
 ROOT = Path(__file__).resolve().parents[1]
 parser = argparse.ArgumentParser()
 parser.add_argument("--prepare-only", action="store_true")
+parser.add_argument("--modules-only", action="store_true")
 parser.add_argument("--resume", action="store_true")
 parser.add_argument("--state-file", type=Path, default=ROOT / ".build/modular/actual.json")
 parser.add_argument("--source-path", type=Path)
 parser.add_argument("--compare-with-state", type=Path)
 parser.add_argument("--core-opt-level", type=int, choices=(0, 3))
+parser.add_argument("--optimize-module", action="append", default=[],
+                    choices=("cdr", "cdr-format", "io", "render", "text", "tracecut", "app"))
 parser.add_argument("--log", default="build-modular.log")
 args = parser.parse_args()
 work = ROOT / ".build/modular"
@@ -28,11 +31,13 @@ if args.resume:
     source = Path(state["source"])
     if args.core_opt_level is not None:
         assert args.core_opt_level == state.get("core_opt_level", 0), "Prepare a new state for a different compiler profile."
+    if args.optimize_module:
+        assert sorted(set(args.optimize_module)) == state.get("optimized_modules", []), "Prepare a new state for different module optimizations."
 else:
     source = (args.source_path or work / ("fuente-" + datetime.now().strftime("%Y%m%d-%H%M%S"))).resolve()
     assert source.is_relative_to(work.resolve())
     source.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copytree(ROOT / "craft-corel-nativo", source,
+    shutil.copytree(ROOT / "craft-plumilla", source,
                     ignore=shutil.ignore_patterns(".git", "target", "node_modules", "__pycache__", ".DS_Store"))
     modules = ["core", "cdr-format", "cdr", "render", "text", "io", "vba", "vba-project", "tracecut"]
     for name in modules:
@@ -48,6 +53,7 @@ else:
     state = {"source": str(source), "target": str(work / "target"), "modules": modules,
              "rust": "1.97.0", "private_rust_abi": True, "published_portable_changed": False}
     state["core_opt_level"] = args.core_opt_level if args.core_opt_level is not None else 0
+    state["optimized_modules"] = sorted(set(args.optimize_module))
     state_file.parent.mkdir(parents=True, exist_ok=True)
     state_file.write_text(json.dumps(state, indent=2), encoding="utf-8")
     # These steps are part of the default recipe, not manual edits of
@@ -119,10 +125,16 @@ environment = dict(os.environ, CARGO_HOME=str(ROOT / ".tools/cargo"), RUSTUP_HOM
                    CARGO_TARGET_DIR=state["target"], CARGO_BUILD_JOBS="2", CARGO_INCREMENTAL="0",
                    CARGO_PROFILE_DEV_DEBUG="0", CARGO_PROFILE_DEV_OPT_LEVEL="0", RUSTFLAGS="-C prefer-dynamic")
 environment["PATH"] = str(ROOT / ".tools/cargo/bin") + os.pathsep + environment.get("PATH", "")
-command = [str(ROOT / ".tools/cargo/bin/cargo.exe"), "+1.97.0", "build", "--offline", "--manifest-path", str(source / "Cargo.toml"),
-           "-p", "craft-corel-nativo", "--lib", "--target", "x86_64-pc-windows-msvc"]
+command = [str(ROOT / ".tools/cargo/bin/cargo.exe"), "+1.97.0", "build", "--offline", "--locked", "--manifest-path", str(source / "Cargo.toml")]
+packages = ["tracedraw-" + name for name in state["modules"]] if args.modules_only else ["craft-plumilla"]
+for package in packages:
+    command += ["-p", package]
+command += ["--lib", "--target", "x86_64-pc-windows-msvc"]
 if state.get("core_opt_level", 0) == 3:
     command += ["--config", 'profile.dev.package.tracedraw-core.opt-level=3', "--verbose"]
+for module in state.get("optimized_modules", []):
+    package = "craft-plumilla" if module == "app" else "tracedraw-" + module
+    command += ["--config", f"profile.dev.package.{package}.opt-level=3"]
 log = (ROOT / ".tools" / args.log).resolve()
 assert log.is_relative_to((ROOT / ".tools").resolve())
 state["build_command"] = command
@@ -133,7 +145,11 @@ with log.open("wb") as output:
                             stdout=output, stderr=subprocess.STDOUT,
                             creationflags=subprocess.CREATE_NO_WINDOW | subprocess.BELOW_NORMAL_PRIORITY_CLASS)
 print("\n".join(log.read_text(encoding="utf-8", errors="replace").splitlines()[-35:]))
-state["build_success"] = result.returncode == 0
+if args.modules_only:
+    state["partial_build_success"] = result.returncode == 0
+    state["build_success"] = False
+else:
+    state["build_success"] = result.returncode == 0
 state["build_exit_code"] = result.returncode
 state_file.write_text(json.dumps(state, indent=2), encoding="utf-8")
 raise SystemExit(result.returncode)

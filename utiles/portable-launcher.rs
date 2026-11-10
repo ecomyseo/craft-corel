@@ -26,7 +26,7 @@ fn launch(verify_only: bool) -> Result<i32, String> {
     let folder = exe
         .parent()
         .ok_or("No se encuentra la carpeta de la aplicación.")?;
-    let dll = folder.join("craft-corel-engine.dll");
+    let dll = folder.join("craft-plumilla-engine.dll");
     let dll_path = wide(dll.as_os_str());
     // LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR | LOAD_LIBRARY_SEARCH_SYSTEM32.
     // Dependencies can come only from this DLL's folder and Windows system32.
@@ -38,17 +38,17 @@ fn launch(verify_only: bool) -> Result<i32, String> {
             std::io::Error::last_os_error()
         ));
     }
-    let version = unsafe { GetProcAddress(module, c"craft_corel_runtime_abi_v1".as_ptr().cast()) };
-    let entry = unsafe { GetProcAddress(module, c"craft_corel_run_v1".as_ptr().cast()) };
+    let version = unsafe { GetProcAddress(module, c"craft_plumilla_runtime_abi_v1".as_ptr().cast()) };
+    let entry = unsafe { GetProcAddress(module, c"craft_plumilla_run_v1".as_ptr().cast()) };
     if version.is_null() || entry.is_null() {
-        return Err("La DLL no corresponde a esta versión de Craft Corel.".into());
+        return Err("La DLL no corresponde a esta versión de Craft Plumilla.".into());
     }
     let abi: unsafe extern "C" fn() -> u32 = unsafe { std::mem::transmute(version) };
     if unsafe { abi() } != 1 {
         return Err("La versión del motor no es compatible con este ejecutable.".into());
     }
     if verify_only {
-        println!("Craft Corel: motor DLL cargado; ABI 1 verificada.");
+        println!("Craft Plumilla: motor DLL cargado; ABI 1 verificada.");
         return Ok(0);
     }
     let run: unsafe extern "C" fn() -> i32 = unsafe { std::mem::transmute(entry) };
@@ -58,16 +58,15 @@ fn launch(verify_only: bool) -> Result<i32, String> {
 
 fn main() -> ExitCode {
     let verify_only = std::env::args_os().any(|arg| arg == "--verify-runtime");
-    let headless =
-        verify_only || std::env::args_os().any(|arg| arg == "--mcp" || arg == "--mcp-window");
+    let headless = std::env::args_os().any(|arg| is_headless_argument(&arg));
     let result = launch(verify_only).and_then(|code| {
-        if code == 0 { Ok(()) } else { Err(format!("La aplicación terminó con el código {code}. Consulta el registro de la carpeta craft-corel-settings.")) }
+        if code == 0 { Ok(()) } else { Err(format!("La aplicación terminó con el código {code}. Consulta el registro de la carpeta craft-plumilla-settings.")) }
     });
     if let Err(message) = result {
         eprintln!("{message}");
         if !headless {
             let text = wide(OsStr::new(&message));
-            let title = wide(OsStr::new("Craft Corel"));
+            let title = wide(OsStr::new("Craft Plumilla"));
             unsafe {
                 MessageBoxW(std::ptr::null_mut(), text.as_ptr(), title.as_ptr(), 0x10);
             }
@@ -75,5 +74,24 @@ fn main() -> ExitCode {
         ExitCode::FAILURE
     } else {
         ExitCode::SUCCESS
+    }
+}
+
+fn is_headless_argument(argument: &OsStr) -> bool {
+    ["--verify-runtime", "--mcp", "--mcp-window", "--profile-export", "--profile-cdr-open"]
+        .iter().any(|flag| argument == OsStr::new(flag))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn all_windowless_modes_suppress_native_error_dialogs() {
+        for flag in ["--verify-runtime", "--mcp", "--mcp-window", "--profile-export", "--profile-cdr-open"] {
+            assert!(is_headless_argument(OsStr::new(flag)), "{flag}");
+        }
+        assert!(!is_headless_argument(OsStr::new("drawing.cdr")));
+        assert!(!is_headless_argument(OsStr::new("--no-splash")));
     }
 }
