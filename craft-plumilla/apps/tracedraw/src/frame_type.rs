@@ -41,6 +41,48 @@ impl App {
 
     /// Frame Type > Create Empty Clip Frame: each object becomes a clip
     /// frame holding nothing yet, one undo step.
+    /// PowerClip > Copy PowerClip From: the selected objects become clip
+    /// frames holding a copy of the contents of `source`'s, centred on
+    /// each the way they sit in `source` (one undo step). Clip frames
+    /// selected keep their own contents.
+    pub fn copy_powerclip_from(&mut self, source: ShapeId) {
+        let Some(src) = self.doc().find_shape(source).cloned() else {
+            return;
+        };
+        let ShapeKind::ClipFrame { contents, .. } = &src.kind else {
+            self.status = crate::i18n::tr("status.no_effect_to_copy");
+            return;
+        };
+        let from = src.bounds().center();
+        let targets: Vec<Shape> = self
+            .selected_shapes()
+            .into_iter()
+            .filter(|s| s.id != source && !matches!(s.kind, ShapeKind::ClipFrame { .. }))
+            .collect();
+        let mut cmds = Vec::new();
+        for t in targets {
+            let Ok((layer, _)) = self.doc().shape(t.id) else {
+                continue;
+            };
+            let layer = layer.id;
+            let to = t.bounds().center();
+            let mut ids = Vec::new();
+            for c in contents.clone() {
+                let mut copy = self.with_new_ids(c);
+                copy.transform_by(tracedraw_core::Affine::translate(to - from));
+                ids.push(copy.id);
+                cmds.push(Command::AddShape { layer, shape: copy });
+            }
+            cmds.push(Command::PlaceInside { contents: ids, frame: t.id });
+        }
+        if cmds.is_empty() {
+            return;
+        }
+        if let Err(e) = self.engine.run_batch("Copy PowerClip", &cmds) {
+            self.status = e.to_string();
+        }
+    }
+
     pub fn objects_to_clip_frames(&mut self) {
         let cmds: Vec<Command> = self
             .framable()

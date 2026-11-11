@@ -2253,6 +2253,7 @@ mod tests {
         ("menu.text.align_to_baseline", "the text has no shifted characters"),
         ("menu.window.refresh_window", "it draws again what is drawn"),
         ("menu.window.workspace_default", "Default is already the workspace"),
+        ("bars.size_small", "Small is already the button size"),
         ("bars.reset", "the bars are where they start"),
         ("palette.default_cmyk", "the only palette shown; Window > Toolbars > Color Palette hides it"),
     ];
@@ -2788,6 +2789,9 @@ fn file_menu(app: &mut App, ui: &mut Ui) {
             if let Some(st) = app.merge_state.clone() {
                 crate::print_merge::perform(app, &st);
             }
+        }
+        if item(ui, "menu.file.print_merge_new_document", "", loaded) {
+            app.create_merged_document(false);
         }
     });
     sep(ui);
@@ -3374,6 +3378,11 @@ fn object_menu(app: &mut App, ui: &mut Ui) {
             }
         }
         sep(ui);
+        if item(ui, "menu.object.clip_frame_copy_from", "", has) {
+            app.pending_copy_powerclip = true;
+            app.status = tr("status.click_source_object");
+        }
+        sep(ui);
         let masks: Vec<_> = app
             .selected_shapes()
             .iter()
@@ -3433,13 +3442,21 @@ fn object_menu(app: &mut App, ui: &mut Ui) {
         if item(ui, "menu.object.symbol_new", "", has) {
             app.create_symbol_from_selection();
         }
-        if item(ui, "menu.object.symbol_insert", "", has_symbols) {
-            let last = app.doc().symbols.len().saturating_sub(1);
-            app.insert_symbol_instance(last);
+        if item(ui, "menu.object.symbol_edit", "", app.can_edit_symbol()) {
+            app.edit_symbol();
+        }
+        let editing = app.symbol_editing.is_some();
+        if item(ui, "menu.object.symbol_finish", "", editing) {
+            app.finish_symbol_edit();
         }
         if item(ui, "menu.object.symbol_revert", "", has_instance) {
             app.revert_symbol_instances();
         }
+        if item(ui, "menu.object.symbol_insert", "", has_symbols) {
+            let last = app.doc().symbols.len().saturating_sub(1);
+            app.insert_symbol_instance(last);
+        }
+        sep(ui);
         if item(ui, "menu.object.symbol_manager", "Ctrl+F3", true) {
             app.show_dockers = true;
             app.docker_tab = DockerTab::Symbols;
@@ -3523,6 +3540,17 @@ fn object_menu(app: &mut App, ui: &mut Ui) {
         }
     });
     sub(ui, "menu.object.clone_effect", |ui| {
+        // Blend, Extrude and Contour first, as in the reference.
+        for (key, kind) in [
+            ("menu.object.clone_blend_from", crate::app::EffectKind::Blend),
+            ("menu.object.clone_extrude_from", crate::app::EffectKind::Extrude),
+            ("menu.object.clone_contour_from", crate::app::EffectKind::Contour),
+        ] {
+            if item(ui, key, "", has) {
+                app.pending_clone_effect = Some(kind);
+                app.status = tr("status.click_source_object");
+            }
+        }
         if item(ui, "menu.object.clone_shadow_from", "", has) {
             app.pending_clone_effect = Some(crate::app::EffectKind::Shadow);
             app.status = tr("status.click_source_object");
@@ -4432,15 +4460,36 @@ fn tools_menu(app: &mut App, ui: &mut Ui) {
     }
     sep(ui);
     sub(ui, "menu.tools.scripts", |ui| {
-        if item(ui, "menu.tools.scripts_docker", "", true) {
-            app.show_dockers = true;
-            app.docker_tab = DockerTab::Scripts;
+        // As the reference's Scripts submenu: editor and run | recording |
+        // temporary script | the panel.
+        if item(ui, "menu.tools.scripts_editor", "", true) {
+            app.open_macro_editor();
         }
         if item(ui, "menu.tools.scripts_run", "", true) {
             app.run_script_file();
         }
-        if check(ui, "menu.tools.scripts_record", "", app.recording.is_some()) {
-            app.toggle_recording();
+        sep(ui);
+        let recording = app.recording.is_some();
+        if item(ui, "menu.tools.scripts_record", "", !recording) {
+            app.start_recording(false);
+        }
+        if item(ui, "menu.tools.scripts_stop_recording", "", recording) {
+            app.stop_recording();
+        }
+        if item(ui, "menu.tools.scripts_cancel_recording", "", recording) {
+            app.cancel_recording();
+        }
+        sep(ui);
+        if item(ui, "menu.tools.scripts_record_temporary", "", !recording) {
+            app.start_recording(true);
+        }
+        if item(ui, "menu.tools.scripts_run_temporary", "", app.temporary_script.is_some()) {
+            app.run_temporary_script();
+        }
+        sep(ui);
+        if item(ui, "menu.tools.scripts_docker", "", true) {
+            app.show_dockers = true;
+            app.docker_tab = DockerTab::Scripts;
         }
     });
     sub(ui, "menu.tools.macros", |ui| macros_items(app, ui));
@@ -4591,7 +4640,27 @@ fn window_menu(app: &mut App, ui: &mut Ui) {
                 app.set_workspace(ws);
             }
         }
+        // The workspaces the user saved, then making and deleting them.
+        let saved = crate::workspace_file::saved_dir()
+            .map(|d| crate::workspace_file::saved_in(&d))
+            .unwrap_or_default();
+        for (name, path) in &saved {
+            if item_label(ui, name, "", true) {
+                app.import_workspace_from(path, crate::workspace_file::WorkspaceParts::ALL, true);
+            }
+        }
         sep(ui);
+        if item(ui, "menu.window.workspace_new", "", true) {
+            app.workspace_new = Some(String::new());
+        }
+        sub_if(ui, "menu.window.workspace_delete", !saved.is_empty(), |ui| {
+            for (name, path) in &saved {
+                if item_label(ui, name, "", true) {
+                    let _ = std::fs::remove_file(path);
+                    app.status = crate::i18n::trf("status.workspace_deleted", &[("name", name)]);
+                }
+            }
+        });
         // Every part, whatever the options chose.
         if item(ui, "menu.window.workspace_import", "", true) {
             app.import_workspace_dialog(crate::workspace_file::WorkspaceParts::ALL, true);
@@ -4634,6 +4703,16 @@ fn window_menu(app: &mut App, ui: &mut Ui) {
         app.effect_picker.open = !app.effect_picker.open;
     }
     sub(ui, "menu.window.toolbars", |ui| {
+        // First, as in the reference: the size of every bar's buttons.
+        sub(ui, "bars.default_button_size", |ui| {
+            for (key, size) in crate::ui::bars::size_menu(false) {
+                let Some(size) = size else { continue };
+                if radio(ui, key, "", app.settings.button_size == size) {
+                    app.settings.button_size = size;
+                }
+            }
+        });
+        sep(ui);
         toolbars_list(app, ui);
         sep(ui);
         let locked = app.settings.bars.locked;
@@ -4836,6 +4915,59 @@ pub(crate) fn options_items(app: &mut App, ui: &mut Ui) {
 mod outline_tests {
     use super::*;
 
+    /// Tools > Scripts: start, stop and cancel a recording, and a temporary
+    /// script that is kept and run again.
+    #[test]
+    fn the_scripts_submenu_records_cancels_and_replays() {
+        use tracedraw_core::Rect;
+        crate::i18n::set_language("en");
+        let ctx = crate::theme::ui_context();
+        let mut out = ctx.run_ui(egui::RawInput::default(), |_| {});
+        out.textures_delta.clear();
+        let mut app = App::headless();
+        let count = |app: &App| app.doc().pages[0].layers.iter().map(|l| l.shapes.len()).sum::<usize>();
+        let draw = |app: &mut App| {
+            app.new_shape(ShapeKind::Rect { rect: Rect::new(0.0, 0.0, 10.0, 10.0), radius: 0.0, corners: None })
+                .expect("rect");
+        };
+        assert!(!run_command(&mut app, &ctx, "menu.tools.scripts_stop_recording"));
+        assert!(!run_command(&mut app, &ctx, "menu.tools.scripts_run_temporary"));
+        // Cancel keeps nothing.
+        app.script_source.clear();
+        assert!(run_command(&mut app, &ctx, "menu.tools.scripts_record"));
+        assert!(app.recording.is_some());
+        draw(&mut app);
+        assert!(run_command(&mut app, &ctx, "menu.tools.scripts_cancel_recording"));
+        assert!(app.recording.is_none() && app.temporary_script.is_none());
+        assert!(app.script_source.is_empty(), "nothing goes to the Scripts panel either");
+        // A temporary recording is kept and runs again.
+        assert!(run_command(&mut app, &ctx, "menu.tools.scripts_record_temporary"));
+        draw(&mut app);
+        assert!(run_command(&mut app, &ctx, "menu.tools.scripts_stop_recording"));
+        assert!(app.temporary_script.is_some());
+        let before = count(&app);
+        assert!(run_command(&mut app, &ctx, "menu.tools.scripts_run_temporary"));
+        assert_eq!(count(&app), before + 1, "{}", app.status);
+        // A normal recording goes to the Scripts panel.
+        assert!(run_command(&mut app, &ctx, "menu.tools.scripts_record"));
+        draw(&mut app);
+        assert!(run_command(&mut app, &ctx, "menu.tools.scripts_stop_recording"));
+        assert!(app.script_source.contains("Recorded macro"));
+    }
+
+    /// Window > Toolbars > Default Button Size sets every bar's buttons.
+    #[test]
+    fn the_toolbars_submenu_sets_the_button_size() {
+        crate::i18n::set_language("en");
+        let ctx = crate::theme::ui_context();
+        let mut out = ctx.run_ui(egui::RawInput::default(), |_| {});
+        out.textures_delta.clear();
+        let mut app = App::headless();
+        let key = crate::settings::ButtonSize::Large.key();
+        assert!(run_command(&mut app, &ctx, key));
+        assert_eq!(app.settings.button_size, crate::settings::ButtonSize::Large);
+    }
+
     /// The rows taken in from the reference's submenus do what they say:
     /// PowerClip's empty frame and fitting, centring on the page each way,
     /// Show Objects, a text frame of the selected object, the document's
@@ -4863,6 +4995,21 @@ mod outline_tests {
         assert!(run_command(&mut app, &ctx, "menu.object.clip_stretch"));
         let b = bounds(&app, inside);
         assert!((b.width() - 100.0).abs() < 1e-6 && (b.height() - 60.0).abs() < 1e-6, "{b:?}");
+        // Copy PowerClip From: another object takes a copy of the contents,
+        // centred the way they sit in the frame they come from.
+        let target = rect(&mut app, Rect::new(400.0, 400.0, 460.0, 440.0));
+        app.select(vec![target]);
+        assert!(run_command(&mut app, &ctx, "menu.object.clip_frame_copy_from"));
+        assert!(app.pending_copy_powerclip);
+        app.pending_copy_powerclip = false;
+        app.copy_powerclip_from(frame);
+        let t = app.doc().find_shape(target).expect("target").clone();
+        let ShapeKind::ClipFrame { contents, .. } = &t.kind else { panic!("not a clip frame: {:?}", t.kind) };
+        assert_eq!(contents.len(), 1);
+        let src_off = bounds(&app, inside).center() - bounds(&app, frame).center();
+        let copy_off = contents[0].bounds().center() - t.bounds().center();
+        assert!((src_off - copy_off).hypot() < 1e-6, "{src_off:?} {copy_off:?}");
+        assert_ne!(contents[0].id, inside, "a copy, with its own id");
         // An object becomes an empty clip frame.
         let plain = rect(&mut app, Rect::new(300.0, 0.0, 340.0, 40.0));
         app.select(vec![plain]);

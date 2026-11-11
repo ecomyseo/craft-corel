@@ -132,7 +132,7 @@ pub fn carried(e: &Effect, src: &Shape, dst: &Shape) -> Effect {
 
 /// `effects` with the one `kind` matches replaced in place by `e` (added
 /// at the end when there is none).
-fn with_effect(effects: &[Effect], kind: CopyKind, e: Effect) -> Vec<Effect> {
+pub(crate) fn with_effect(effects: &[Effect], kind: CopyKind, e: Effect) -> Vec<Effect> {
     let mut out = Vec::with_capacity(effects.len() + 1);
     let mut placed = false;
     for x in effects {

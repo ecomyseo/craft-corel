@@ -375,6 +375,8 @@ impl App {
         if self.engine.undo_label() == Some(label) && self.effect_edit_step.as_ref() == Some(&key) {
             let _ = self.engine.undo();
         }
+        let mut cmds = cmds;
+        self.prepare_effect_batch(&mut cmds);
         if let Err(e) = self.engine.run_batch(label, &cmds) {
             self.status = e.to_string();
             return;
@@ -409,6 +411,8 @@ impl App {
         if cmds.is_empty() {
             return;
         }
+        let mut cmds = cmds;
+        self.prepare_effect_batch(&mut cmds);
         if let Err(e) = self.engine.run_batch("Extrude", &cmds) {
             self.status = e.to_string();
         }

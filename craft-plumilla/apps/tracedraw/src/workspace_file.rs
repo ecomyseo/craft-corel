@@ -452,6 +452,93 @@ impl App {
     }
 }
 
+/// Window > Workspace > New Workspace keeps the workspaces here, one file
+/// each, named as the user named it.
+pub fn saved_dir() -> Option<PathBuf> {
+    crate::settings::config_dir().map(|d| d.join("workspaces"))
+}
+
+/// The workspaces saved in `dir`, by name.
+pub fn saved_in(dir: &Path) -> Vec<(String, PathBuf)> {
+    let mut out: Vec<(String, PathBuf)> = std::fs::read_dir(dir)
+        .map(|d| {
+            d.flatten()
+                .map(|e| e.path())
+                .filter(|p| p.extension().is_some_and(|x| x == EXTENSION))
+                .filter_map(|p| Some((p.file_stem()?.to_string_lossy().into_owned(), p)))
+                .collect()
+        })
+        .unwrap_or_default();
+    out.sort_by(|a, b| a.0.to_lowercase().cmp(&b.0.to_lowercase()));
+    out
+}
+
+/// A name made safe as a file name (no path separators or reserved
+/// characters), trimmed; empty when nothing is left.
+pub fn file_name_for(name: &str) -> String {
+    name.chars()
+        .map(|c| if "\\/:*?\"<>|".contains(c) || c.is_control() { '_' } else { c })
+        .collect::<String>()
+        .trim()
+        .trim_matches('.')
+        .to_string()
+}
+
+impl App {
+    /// New Workspace: every part of the workspace now saved under `name`
+    /// in `dir`; the path, or `None` when the name is empty.
+    pub fn save_workspace_in(&mut self, dir: &Path, name: &str) -> Option<PathBuf> {
+        let file = file_name_for(name);
+        if file.is_empty() {
+            return None;
+        }
+        std::fs::create_dir_all(dir).ok()?;
+        let path = dir.join(format!("{file}.{EXTENSION}"));
+        self.export_workspace_to(&path, WorkspaceParts::ALL);
+        path.is_file().then_some(path)
+    }
+}
+
+/// The name window of Window > Workspace > New Workspace.
+pub fn new_workspace_window(app: &mut App, ctx: &egui::Context) {
+    let Some(mut name) = app.workspace_new.take() else {
+        return;
+    };
+    let mut keep = true;
+    let mut done = false;
+    egui::Window::new(tr("workspace.new_title"))
+        .id(egui::Id::new("workspace_new"))
+        .collapsible(false)
+        .resizable(false)
+        .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+        .show(ctx, |ui| {
+            ui.label(tr("workspace.new_label"));
+            let resp = ui.add(egui::TextEdit::singleline(&mut name).desired_width(260.0));
+            if !resp.has_focus() && !resp.lost_focus() {
+                resp.request_focus();
+            }
+            let enter = resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+            ui.add_space(6.0);
+            ui.horizontal(|ui| {
+                if ui.button(tr("dialog.ok")).clicked() || enter {
+                    done = true;
+                }
+                if ui.button(tr("dialog.cancel")).clicked()
+                    || ui.input(|i| i.key_pressed(egui::Key::Escape))
+                {
+                    keep = false;
+                }
+            });
+        });
+    if done {
+        if let Some(dir) = saved_dir() {
+            app.save_workspace_in(&dir, &name);
+        }
+    } else if keep {
+        app.workspace_new = Some(name);
+    }
+}
+
 /// `path` with the workspace extension when it has none.
 fn with_extension(path: PathBuf) -> PathBuf {
     if path.extension().is_some() {
@@ -465,6 +552,31 @@ fn with_extension(path: PathBuf) -> PathBuf {
 mod tests {
     use super::*;
     use crate::ui::bars::Dock;
+
+    /// Window > Workspace > New Workspace keeps the workspace under the
+    /// name typed (made safe as a file name) and lists it; an empty name
+    /// keeps nothing. The menu row opens the name window.
+    #[test]
+    fn a_new_workspace_is_saved_listed_and_named_safely() {
+        let dir = std::env::temp_dir().join(format!("ws-saved-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let mut app = App::headless();
+        assert_eq!(file_name_for(" a/b:c? "), "a_b_c_");
+        assert!(app.save_workspace_in(&dir, "  ").is_none());
+        let path = app.save_workspace_in(&dir, "Mi espacio").expect("saved");
+        assert!(path.is_file());
+        assert!(WorkspaceFile::from_bytes(&std::fs::read(&path).expect("read")).is_ok());
+        app.save_workspace_in(&dir, "a/b").expect("saved");
+        let names: Vec<String> = saved_in(&dir).into_iter().map(|(n, _)| n).collect();
+        assert_eq!(names, ["a_b", "Mi espacio"]);
+        let _ = std::fs::remove_dir_all(&dir);
+        crate::i18n::set_language("en");
+        let ctx = crate::theme::ui_context();
+        let mut out = ctx.run_ui(egui::RawInput::default(), |_| {});
+        out.textures_delta.clear();
+        assert!(crate::ui::menus::run_command(&mut app, &ctx, "menu.window.workspace_new"));
+        assert_eq!(app.workspace_new.as_deref(), Some(""));
+    }
 
     /// A workspace changed in every part.
     fn customized() -> App {

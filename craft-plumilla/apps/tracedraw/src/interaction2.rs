@@ -22,6 +22,7 @@ impl App {
             || self.pending_shaping.is_some()
             || self.pending_merge_frame
             || self.pending_copy_effect.is_some()
+            || self.pending_copy_powerclip
             || self.pending_copy_envelope
             || self.pending_clone_effect.is_some()
             || self.pending_blend_path
@@ -37,6 +38,7 @@ impl App {
             self.pending_shaping = None;
             self.pending_merge_frame = false;
             self.pending_copy_effect = None;
+            self.pending_copy_powerclip = false;
             self.pending_copy_envelope = false;
             self.pending_clone_effect = None;
             self.pending_blend_path = false;
@@ -91,6 +93,11 @@ impl App {
         } else if let Some(kind) = self.pending_copy_effect.take() {
             if let Some(t) = target {
                 self.copy_effect_from(t, kind);
+            }
+        } else if self.pending_copy_powerclip {
+            self.pending_copy_powerclip = false;
+            if let Some(t) = target {
+                self.copy_powerclip_from(t);
             }
         } else if self.pending_copy_envelope {
             self.pending_copy_envelope = false;

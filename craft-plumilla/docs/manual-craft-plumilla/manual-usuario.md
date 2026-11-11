@@ -189,6 +189,16 @@ Estos atajos proceden de las funciones documentadas de la base. No se han vuelto
 
 ## 16. Novedades de esta edición
 
+### Versión 0.43.0 (11 de noviembre de 2026)
+
+**Editar símbolos en su sitio.** Con una copia de un símbolo seleccionada, **Objeto > Símbolo > Editar símbolo** pone su definición en ese lugar, aislada en modo de enfoque; **Terminar de editar el símbolo** la guarda y todas las copias cambian a la vez (se deshace en un paso).
+
+**Más efectos clonables.** **Objeto > Clonar efecto** clona también mezclas, extrusiones y contornos: el clon sigue al original cuando este se cambia, también desde su panel, hasta que se edita el clon. **PowerClip > Copiar PowerClip de...** convierte los objetos seleccionados en marcos con una copia del contenido de otro marco.
+
+**Espacios de trabajo con nombre.** **Ventana > Espacio de trabajo > Nuevo espacio de trabajo** guarda las barras, los paneles y el aspecto actuales con el nombre que se le dé; aparecen en el mismo submenú para volver a ellos, y **Eliminar espacio de trabajo** los borra.
+
+**Scripts y combinación.** **Herramientas > Scripts** tiene el editor, ejecutar, iniciar, detener y cancelar la grabación, y grabar y ejecutar un script temporal. **Combinar en documento nuevo** crea un documento con una página por registro.
+
 ### Versión 0.42.0 (11 de noviembre de 2026)
 
 **Menús en el orden de la referencia.** Los doce menús y sus submenús siguen el orden y los separadores de la configuración de menús de la referencia. En **Edición** están **Traer al foco** y **Salir del modo de enfoque**; en **Mapas de bits**, el **Laboratorio de ajuste de imagen**, **Eliminar artefactos JPEG** (quita los bloques de una foto JPEG muy comprimida sin borrar sus bordes) y las órdenes de calco en el propio menú; **Objeto > Perspectiva** reúne Añadir perspectiva y Dibujar en perspectiva.

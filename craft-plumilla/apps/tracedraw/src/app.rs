@@ -1433,6 +1433,8 @@ pub struct App {
     /// Object > Symmetry > Edit Symmetry: the object whose symmetry is
     /// being edited.
     pub symmetry_edit: Option<ShapeId>,
+    /// Object > Symbol > Edit Symbol: the symbol being edited in place.
+    pub symbol_editing: Option<crate::symbol_edit::SymbolEdit>,
     /// The symmetry whose last change made the undo step "Edit Symmetry",
     /// so the next change joins it.
     pub symmetry_step: Option<ShapeId>,
@@ -1628,6 +1630,10 @@ pub struct App {
     /// what it leaves of the source and the target (#562).
     pub pending_shaping: Option<(crate::ops::Shaping, bool, bool)>,
     pub pending_copy_effect: Option<crate::copy_effect::CopyKind>,
+    /// PowerClip > Copy PowerClip From: waiting for the frame to copy.
+    pub pending_copy_powerclip: bool,
+    /// Window > Workspace > New Workspace: the name being typed.
+    pub workspace_new: Option<String>,
     /// Copy Envelope Properties waits for the object to copy from.
     pub pending_copy_envelope: bool,
     pub pending_clone_effect: Option<EffectKind>,
@@ -1692,6 +1698,11 @@ pub struct App {
     pub text_hyphenation: bool,
     /// Macro recording in progress: the commands run since Record started.
     pub recording: Option<Vec<Command>>,
+    /// The recording under way is a temporary one (Tools > Scripts >
+    /// Record Temporary Script): kept for Run Temporary Script.
+    pub recording_temporary: bool,
+    /// The last temporary recording, as a script.
+    pub temporary_script: Option<String>,
     pub workspace: Workspace,
     pub palettes: Vec<crate::palette::Palette>,
     pub visible_palettes: Vec<usize>,
@@ -2061,6 +2072,9 @@ impl ViewMode {
 pub enum EffectKind {
     Shadow,
     Transparency,
+    Extrude,
+    Contour,
+    Blend,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -2831,6 +2845,7 @@ impl App {
             clip_frame_edit: None,
             clip_edit_marks: Vec::new(),
             symmetry_edit: None,
+            symbol_editing: None,
             symmetry_step: None,
             symmetry_turning: false,
             symmetry_doc: Default::default(),
@@ -2927,6 +2942,8 @@ impl App {
             last_bg_remove: None,
             export_by_format: Vec::new(),
             pending_copy_effect: None,
+            pending_copy_powerclip: false,
+            workspace_new: None,
             pending_copy_envelope: false,
             pending_clone_effect: None,
             options_labels: false,
@@ -2959,6 +2976,8 @@ impl App {
             show_non_printing: false,
             text_hyphenation: false,
             recording: None,
+            recording_temporary: false,
+            temporary_script: None,
             workspace: Workspace::Default,
             palettes: crate::palette::builtin_palettes(),
             visible_palettes: vec![0],

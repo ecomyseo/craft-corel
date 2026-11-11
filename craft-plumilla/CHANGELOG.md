@@ -4,6 +4,16 @@ Versions follow the tags of this repository; every push to `main` also
 publishes a nightly build. [`docs/features.md`](docs/features.md) has the
 full, row-by-row status.
 
+## 0.43.0 (2026-11-11)
+
+- Object > Clone Effect > Blend, Extrude and Contour From: the clone follows the source's blend settings, extrusion or contour, also when it is changed in its docker (the same undo step), until the clone's own is changed.
+- Object > PowerClip > Copy PowerClip From: the selected objects become frames holding a copy of another frame's contents.
+- Window > Workspace > New Workspace (saved under a name and listed in the submenu to switch to it) and Delete Workspace.
+- Object > Symbol > Edit Symbol and Finish Editing Symbol: the definition is edited in place, in focus, and every instance follows when finished (one undo step).
+- File > Print Merge > Merge to New Document (the drawing filled once per record, opened as a document of its own).
+- Tools > Scripts as the reference has it: Script Editor and Run Script; Start, Stop and Cancel Recording; Record and Run Temporary Script; then the Scripts panel.
+- Window > Toolbars > Default Button Size.
+
 ## 0.42.0 (2026-11-11)
 
 - 22 new bitmap effects where the reference's Effects menu has them: Zigzag; Shadows/Midtones/Highlights, Tint/Temperature, Grayscale and Vibrance; Dabble; Tune Blur and Feather; Lens Flare, Lighting Effects and Spot Filter; Tune Sharpness; Band Pass and User Defined; Shear; Tune Noise and 3D Stereo Noise; Brick Wall, Bubbles, Canvas, Plaster Wall, Screen Door and Underpainting; Threshold.

@@ -720,6 +720,7 @@ fn root_frame(app: &mut App, ui: &mut Ui) {
             .frame(Frame::new().fill(Tokens::panel()))
             .show(ui, |ui| welcome::welcome_screen(app, ui));
         dialogs::show(app, &ctx);
+        crate::workspace_file::new_workspace_window(app, &ctx);
         return;
     }
     // The Welcome Screen closed and no drawing open: an empty workspace.
@@ -741,6 +742,7 @@ fn root_frame(app: &mut App, ui: &mut Ui) {
                 });
             });
         dialogs::show(app, &ctx);
+        crate::workspace_file::new_workspace_window(app, &ctx);
         return;
     }
     if app.page_sorter && !app.multipage {
@@ -748,6 +750,7 @@ fn root_frame(app: &mut App, ui: &mut Ui) {
             .frame(Frame::new().fill(Tokens::panel()))
             .show(ui, |ui| preview::page_sorter(app, ui));
         dialogs::show(app, &ctx);
+        crate::workspace_file::new_workspace_window(app, &ctx);
         return;
     }
 
@@ -771,6 +774,7 @@ fn root_frame(app: &mut App, ui: &mut Ui) {
     }
     update_card::show(app, &ctx);
     dialogs::show(app, &ctx);
+    crate::workspace_file::new_workspace_window(app, &ctx);
     // A change this frame made to a master shows on its clones at once.
     let before = app.engine.revision();
     app.sync_object_clones();

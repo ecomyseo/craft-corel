@@ -98,6 +98,7 @@ mod fill_page;
 mod fill_tool;
 mod fit_path;
 mod focus;
+mod symbol_edit;
 #[cfg(any(target_arch = "wasm32", test))]
 mod font_folder;
 #[cfg(not(target_arch = "wasm32"))]

@@ -3320,18 +3320,53 @@ impl App {
     }
 
     pub fn toggle_recording(&mut self) {
-        match self.recording.take() {
-            Some(cmds) => {
-                let script = crate::scripting::commands_to_script(&cmds);
-                self.script_source = script;
-                self.show_dockers = true;
-                self.docker_tab = crate::app::DockerTab::Scripts;
-                self.status = tr("status.recording_stopped");
-            }
-            None => {
-                self.recording = Some(Vec::new());
-                self.status = tr("status.recording");
-            }
+        if self.recording.is_some() {
+            self.stop_recording();
+        } else {
+            self.start_recording(false);
+        }
+    }
+
+    /// Tools > Scripts > Start Recording (or Record Temporary Script).
+    pub fn start_recording(&mut self, temporary: bool) {
+        if self.recording.is_none() {
+            self.recording = Some(Vec::new());
+            self.recording_temporary = temporary;
+            self.status = tr("status.recording");
+        }
+    }
+
+    /// Tools > Scripts > Stop Recording: the commands become a script, in
+    /// the Scripts panel, or kept as the temporary script.
+    pub fn stop_recording(&mut self) {
+        let Some(cmds) = self.recording.take() else {
+            return;
+        };
+        let script = crate::scripting::commands_to_script(&cmds);
+        if self.recording_temporary {
+            self.temporary_script = Some(script);
+            self.status = tr("status.temporary_script_kept");
+        } else {
+            self.script_source = script;
+            self.show_dockers = true;
+            self.docker_tab = crate::app::DockerTab::Scripts;
+            self.status = tr("status.recording_stopped");
+        }
+        self.recording_temporary = false;
+    }
+
+    /// Tools > Scripts > Cancel Recording: nothing recorded is kept.
+    pub fn cancel_recording(&mut self) {
+        if self.recording.take().is_some() {
+            self.recording_temporary = false;
+            self.status = tr("status.recording_cancelled");
+        }
+    }
+
+    /// Tools > Scripts > Run Temporary Script.
+    pub fn run_temporary_script(&mut self) {
+        if let Some(s) = self.temporary_script.clone() {
+            self.run_script(&s);
         }
     }
 
