@@ -56,6 +56,8 @@ struct Actions {
     rename_layer: Option<(LayerId, String)>,
     rename_object: Option<(ShapeId, String)>,
     rename_page: Option<String>,
+    /// Insert Spread Before (false) or After (true) the page's spread.
+    insert_spread: Option<(PageId, bool)>,
     delete_layer: Option<LayerId>,
     reorder: Option<(LayerId, usize)>,
     /// Each object row drawn and where, for a row dragged along the list
@@ -577,6 +579,14 @@ pub fn objects(app: &mut App, ui: &mut Ui) {
                         act.goto = Some(page.id);
                     }
                     ui.close();
+                }
+                // Spreads: with facing pages, two pages at a time.
+                let facing = app.doc().metadata.facing_pages;
+                for (key, after) in [("context.insert_spread_before", false), ("context.insert_spread_after", true)] {
+                    if ui.add_enabled(facing, egui::Button::new(tr(key))).clicked() {
+                        act.insert_spread = Some((page.id, after));
+                        ui.close();
+                    }
                 }
             });
             if page_open {
@@ -1760,6 +1770,12 @@ fn apply(app: &mut App, ui: &Ui, act: Actions) {
     if let Some(page) = act.goto {
         if let Some(i) = app.doc().pages.iter().position(|p| p.id == page) {
             app.goto_page(i);
+        }
+    }
+    if let Some((page, after)) = act.insert_spread {
+        if let Some(i) = app.doc().pages.iter().position(|p| p.id == page) {
+            app.goto_page(i);
+            app.insert_spread(after);
         }
     }
     if act.toggle_master {

@@ -4,6 +4,15 @@ Versions follow the tags of this repository; every push to `main` also
 publishes a nightly build. [`docs/features.md`](docs/features.md) has the
 full, row-by-row status.
 
+## 0.44.0 (2026-11-11)
+
+- Insert Spread Before and After in the Objects docker's page menu (two pages at a time with facing pages, one undo step).
+- Internet Links > Launch Browser opens the selected object's link.
+- Window > Color Palettes > New Palette from Selection.
+- Close Path in four ways in the Shape tool's right-click menu: the closest nodes or each subpath's start and end, with a straight or a curved line; Reverse Subpaths for the subpaths of the chosen nodes.
+- Swap Arrowheads at the end of the property bar's arrowhead lists.
+- Sort Colors in the palette menu: by hue, saturation, brightness, HSB, RGB or name, or reversed.
+
 ## 0.43.0 (2026-11-11)
 
 - Object > Clone Effect > Blend, Extrude and Contour From: the clone follows the source's blend settings, extrusion or contour, also when it is changed in its docker (the same undo step), until the clone's own is changed.

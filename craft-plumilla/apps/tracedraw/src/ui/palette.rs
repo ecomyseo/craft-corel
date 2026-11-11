@@ -1280,6 +1280,21 @@ pub fn menu(app: &mut App, ui: &mut Ui, which: Row) {
         }
         bitmap_colors_items(app, ui, Some(i));
     }
+    // Sort Colors: a palette of the user's, or the document palette.
+    let user = user_palette_of(app, which);
+    let document = shows_document(app, which) && app.has_document();
+    if user.is_some() || document {
+        crate::ui::menus::sub(ui, "palette.sort", |ui| {
+            for (by, key) in crate::palette_sort::SortBy::ALL {
+                if item(ui, key, "", true) {
+                    match user {
+                        Some(i) => app.sort_user_palette(i, by),
+                        None => app.sort_document_palette(by),
+                    }
+                }
+            }
+        });
+    }
     if let Row::Extra(k) = which {
         sep(ui);
         if item(ui, "palette.rename", "", true) {

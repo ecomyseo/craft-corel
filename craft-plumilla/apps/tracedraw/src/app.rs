@@ -9194,6 +9194,48 @@ impl App {
         self.fit_pending = true;
     }
 
+    /// Insert Spread Before / After: with facing pages, two pages like the
+    /// current one before the current spread or after it (one undo step);
+    /// the first new page is made current. Without facing pages, one page
+    /// as Insert Page.
+    pub fn insert_spread(&mut self, after: bool) {
+        let md = &self.doc().metadata;
+        if !md.facing_pages {
+            self.insert_page(after);
+            return;
+        }
+        let start = md.facing_start;
+        let idx = self.page_index();
+        let count = self.doc().pages.len();
+        let spread = tracedraw_core::spreads::spread_of(idx, count, start);
+        let pages: Vec<usize> = spread.pages().collect();
+        let at = if after {
+            pages.last().copied().unwrap_or(idx) + 1
+        } else {
+            pages.first().copied().unwrap_or(idx)
+        };
+        let size = self.page_size();
+        let first = self.as_one_step(|app| {
+            let mut first = None;
+            for k in 0..2 {
+                app.run(app.localized_page(size));
+                let Some(new) = app.doc().pages.last().map(|p| p.id) else {
+                    return None;
+                };
+                if at + k + 1 < app.doc().pages.len() {
+                    app.run(Command::MovePage { page: new, to: at + k });
+                }
+                first.get_or_insert(new);
+            }
+            first
+        });
+        if let Some(p) = first {
+            self.page = p;
+            self.selection.clear();
+            self.fit_pending = true;
+        }
+    }
+
     /// The document navigator's insert buttons: a page like the current
     /// one, before or after it, made current.
     pub fn insert_page(&mut self, after: bool) {

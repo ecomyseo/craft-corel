@@ -357,3 +357,16 @@ Medium (first), High, Highest; kept in the preferences
   tilted rectangles, a circle and a tilted ellipse, a triangle, a line,
   recognition off)
 - `ui::drawing_bars::tests::both_bars_draw`
+
+## Close Path, Reverse Subpaths and Swap Arrowheads
+
+The right-click menu of the Shape tool has **Close Path** with the four
+ways of the reference: the closest nodes with a straight or a curved line
+(the open subpaths chained by their nearest ends into one closed subpath)
+and each subpath's start and end with a straight or a curved line (the
+curve carries on the directions of the two ends). Closed subpaths stay as
+they are; one undo step. **Reverse Subpaths** turns round only the
+subpaths that hold chosen nodes (Reverse Curve turns the whole curve).
+The arrowhead lists of the property bar end with **Swap Arrowheads**, which
+exchanges each selected outline's start and end arrowheads
+(`close_path::tests`).

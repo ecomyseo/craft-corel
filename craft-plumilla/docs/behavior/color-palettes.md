@@ -348,3 +348,10 @@ update the document palette (on).
   object without a fill, the document palette)
 - `tracedraw_core` `engine::tests::amending_joins_the_last_step_only_right_after_it`
 - `tracedraw_cdr` `container::tests::document_palette_xml_reads_names_and_tints`
+
+## Sort Colors
+
+The palette menu of a palette of the user's or of the document palette
+has **Sort Colors**: by hue, saturation, brightness, HSB value, RGB value or
+name, or the order turned round. The document palette is sorted in one undo
+step; a locked palette keeps its order (`palette_sort::tests`).

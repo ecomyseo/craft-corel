@@ -3960,6 +3960,21 @@ impl App {
         self.run(Command::SetDocumentPalette { colors });
     }
 
+    /// Window > Color Palettes > New Palette from Selection: a palette of
+    /// the user's holding the fill and outline colours of the selection,
+    /// shown in a bar of its own.
+    pub fn new_palette_from_selection(&mut self) -> Option<usize> {
+        let mut colors = Vec::new();
+        Self::colors_of(&self.selected_shapes(), &mut colors);
+        if colors.is_empty() {
+            return None;
+        }
+        let name = self.next_palette_name();
+        let i = self.new_palette(&name)?;
+        self.add_colors_to_palette(i, &colors);
+        Some(i)
+    }
+
     /// Window > Color Palettes > Close All Palettes: the default palette,
     /// the document palette and every palette bar put away (Window >
     /// Toolbars or the list below brings each back).

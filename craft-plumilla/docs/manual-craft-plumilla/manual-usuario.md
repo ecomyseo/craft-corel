@@ -189,6 +189,14 @@ Estos atajos proceden de las funciones documentadas de la base. No se han vuelto
 
 ## 16. Novedades de esta edición
 
+### Versión 0.44.0 (11 de noviembre de 2026)
+
+**Cerrar trayectos.** Con la herramienta Forma, el botón derecho tiene **Cerrar trayecto** de cuatro formas: los nodos más cercanos o el inicio y el final de cada subtrayecto, con una recta o con una curva que continúa la dirección de los extremos. **Invertir subtrayectos** invierte solo los subtrayectos de los nodos elegidos.
+
+**Puntas de flecha y paletas.** Las listas de puntas de flecha de la barra de propiedades terminan en **Intercambiar puntas de flecha**. El menú de una paleta propia o de la del documento tiene **Ordenar colores** por tono, saturación, brillo, HSB, RGB o nombre, o invertir el orden; **Ventana > Paletas de color > Paleta nueva desde la selección** crea una paleta con los colores de lo seleccionado.
+
+**Páginas y vínculos.** En el panel Objetos, el menú de una página tiene **Insertar pliego antes** y **después** (dos páginas con páginas enfrentadas). **Vínculos de Internet > Abrir en el navegador** abre el vínculo del objeto seleccionado.
+
 ### Versión 0.43.0 (11 de noviembre de 2026)
 
 **Editar símbolos en su sitio.** Con una copia de un símbolo seleccionada, **Objeto > Símbolo > Editar símbolo** pone su definición en ese lugar, aislada en modo de enfoque; **Terminar de editar el símbolo** la guarda y todas las copias cambian a la vez (se deshace en un paso).

@@ -646,6 +646,17 @@ pub(crate) fn object_menu(app: &mut App, ui: &mut Ui, close: &mut bool) {
             app.show_dockers = true;
             app.docker_tab = DockerTab::Links;
         }
+        // The selected object's link, in the web browser.
+        let link = app
+            .selected_shapes()
+            .first()
+            .and_then(|s| s.link.clone())
+            .filter(|l| !l.trim().is_empty());
+        if ci(ui, close, "context.launch_browser", "", link.is_some()) {
+            if let Some(url) = link {
+                app.open_url(&url);
+            }
+        }
     });
     sub(ui, "docker.object_styles", |ui| {
         if ci(ui, close, "docker.new_style_from_selection", "", true) {
@@ -798,6 +809,9 @@ pub(crate) fn node_menu(app: &mut App, ui: &mut Ui, close: &mut bool) {
     if ci(ui, close, "context.node_reverse", "", true) {
         app.reverse_selected_curves();
     }
+    if ci(ui, close, "context.node_reverse_subpaths", "", has_nodes) {
+        app.reverse_selected_subpaths();
+    }
     if ci(ui, close, "context.node_extract", "", has_nodes) {
         app.extract_subpath();
     }
@@ -805,6 +819,13 @@ pub(crate) fn node_menu(app: &mut App, ui: &mut Ui, close: &mut bool) {
     if ci(ui, close, "context.node_close", "", true) {
         app.close_selected_curves();
     }
+    sub(ui, "context.close_path", |ui| {
+        for (mode, key) in crate::close_path::CloseMode::ALL {
+            if ci(ui, close, key, "", true) {
+                app.close_selected_paths(mode);
+            }
+        }
+    });
     if check(ui, "context.elastic_mode", "", app.elastic_mode) {
         app.elastic_mode = !app.elastic_mode;
         *close = true;

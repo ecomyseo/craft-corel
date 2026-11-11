@@ -4769,6 +4769,9 @@ pub(crate) fn color_palettes_body(app: &mut App, ui: &mut Ui) {
         app.add_document_colors_to_palette();
     }
     sep(ui);
+    if item(ui, "menu.window.palette_new_from_selection", "", !app.selection.is_empty()) {
+        app.new_palette_from_selection();
+    }
     if item(ui, "menu.window.palette_from_document", "", true) {
         app.palette_from_document();
     }

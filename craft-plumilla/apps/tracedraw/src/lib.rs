@@ -97,6 +97,8 @@ mod files;
 mod fill_page;
 mod fill_tool;
 mod fit_path;
+mod close_path;
+mod palette_sort;
 mod focus;
 mod symbol_edit;
 #[cfg(any(target_arch = "wasm32", test))]

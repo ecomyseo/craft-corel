@@ -2418,6 +2418,11 @@ pub fn outline_part(app: &mut App, ui: &mut Ui) {
                     }
                 }
             }
+            ui.separator();
+            // The start's and the end's arrowheads change places.
+            if ui.button(tr("toolbar.arrow_swap")).clicked() {
+                app.swap_arrowheads();
+            }
         })
         .response
         .rich_tip(crate::ui::tips::keyed(if start {
