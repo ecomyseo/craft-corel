@@ -71,6 +71,17 @@ pub const CONTOUR: &[EffectSpec] = &[
         apply: trace_contour,
         reach: no_reach,
     },
+    // Last in Contour, as in the reference's menu configuration.
+    EffectSpec {
+        id: "local_equalization",
+        params: &[
+            range("width", 2.0, 255.0, 20.0, 1.0),
+            range("height", 2.0, 255.0, 20.0, 1.0),
+            check("lock", true),
+        ],
+        apply: super::adjust::local_equalization,
+        reach: no_reach,
+    },
 ];
 
 pub fn bit_planes(img: &RgbaImage, p: &P) -> RgbaImage {

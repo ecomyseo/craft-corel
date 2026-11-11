@@ -40,6 +40,7 @@ it, live in `docs/cdr-format.md` and in the pages of `docs/behavior/`.
 | TraceCut geometry (`crates/tracecut`) | Written for TraceDraw by a contributor (#170) and reviewed line by line before it was taken in; no code of any cutter driver, plugin, nesting library or other implementation read or ported. Plotter output from public HPGL command references; algorithms from their general published descriptions (MaxRects rectangle packing, nearest neighbour and 2-opt tours, point in polygon by crossings, SplitMix64). |
 | DOCX, RTF, TXT | ECMA-376 (Office Open XML) and the RTF specification. |
 | ICC profiles | The ICC.1 specification (v2 and v4). |
+| TWAIN (File > Acquire Image) | The public TWAIN 2 specification (operation triplets, the `TW_IDENTITY`, `TW_USERINTERFACE`, `TW_EVENT`, `TW_PENDINGXFERS` and `TW_CALLBACK` structures, return codes, states) and Microsoft's documentation of packed DIBs and BMP files. The source manager installed with Windows is only called through `DSM_Entry`; no code of it or of any TWAIN application read or ported. |
 
 ## Log
 

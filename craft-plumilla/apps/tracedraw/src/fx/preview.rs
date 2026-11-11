@@ -533,6 +533,34 @@ mod tests {
         }
     }
 
+    /// Bitmaps > Image Adjustment Lab and Remove JPEG Artifacts open the
+    /// dialog of their effect over the selected bitmap; with nothing
+    /// selected they are greyed.
+    #[test]
+    fn the_bitmaps_menu_opens_the_lab_and_the_jpeg_cleaner() {
+        use crate::ui::menus::run_command;
+        crate::i18n::set_language("en");
+        let (ctx, mut app, _) = bitmap_app(32, 32);
+        let mut out = ctx.run_ui(egui::RawInput::default(), |_| {});
+        out.textures_delta.clear();
+        for (key, effect) in [
+            ("menu.bitmaps.image_adjustment_lab", "image_adjustments"),
+            ("menu.bitmaps.remove_jpeg_artifacts", "jpeg_artifact_removal"),
+        ] {
+            app.dialog = crate::ui::dialogs::Dialog::None;
+            assert!(run_command(&mut app, &ctx, key), "{key}");
+            match &app.dialog {
+                crate::ui::dialogs::Dialog::Effect(s) => assert_eq!(s.effect.id, effect),
+                _ => panic!("{key} opened no effect dialog"),
+            }
+        }
+        app.dialog = crate::ui::dialogs::Dialog::None;
+        let picked = app.selection.clone();
+        app.select(Vec::new());
+        assert!(!run_command(&mut app, &ctx, "menu.bitmaps.remove_jpeg_artifacts"));
+        app.select(picked);
+    }
+
     /// A drawing with a `w` x `h` bitmap of a sharp pattern, selected.
     fn bitmap_app(w: u32, h: u32) -> (egui::Context, App, ShapeId) {
         let ctx = crate::theme::ui_context();

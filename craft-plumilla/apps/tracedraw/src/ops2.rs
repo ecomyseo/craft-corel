@@ -3925,6 +3925,18 @@ impl App {
         self.run(Command::SetDocumentPalette { colors });
     }
 
+    /// Window > Color Palettes > Close All Palettes: the default palette,
+    /// the document palette and every palette bar put away (Window >
+    /// Toolbars or the list below brings each back).
+    pub fn close_all_palettes(&mut self) {
+        self.settings.palette.show_palette = false;
+        self.settings.palette.show_document = false;
+        self.settings.palette_bars.clear();
+        self.palette_expanded = None;
+        self.settings.save();
+        self.rebuild_palette();
+    }
+
     /// Add from document: every colour used in the drawing joins the
     /// document palette (the colours already there stay first).
     pub fn add_document_colors_to_palette(&mut self) {

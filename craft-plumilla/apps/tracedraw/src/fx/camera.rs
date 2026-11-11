@@ -31,9 +31,43 @@ pub const EFFECTS: &[EffectSpec] = &[
         reach: no_reach,
     },
     EffectSpec {
+        id: "lens_flare",
+        params: &[
+            range("center_x", 0.0, 100.0, 30.0, 1.0),
+            range("center_y", 0.0, 100.0, 30.0, 1.0),
+            range("brightness", 10.0, 200.0, 100.0, 1.0),
+        ],
+        apply: super::more::lens_flare,
+        reach: no_reach,
+    },
+    EffectSpec {
+        id: "lighting",
+        params: &[
+            range("center_x", 0.0, 100.0, 30.0, 1.0),
+            range("center_y", 0.0, 100.0, 30.0, 1.0),
+            range("range", 5.0, 200.0, 60.0, 1.0),
+            range("light_intensity", 0.0, 100.0, 70.0, 1.0),
+            color("light_color", 0xFFFFFF),
+        ],
+        apply: super::more::lighting,
+        reach: no_reach,
+    },
+    EffectSpec {
         id: "sepia_toning",
         params: &[range("level", 0.0, 100.0, 50.0, 1.0)],
         apply: sepia,
+        reach: no_reach,
+    },
+    EffectSpec {
+        id: "spot_filter",
+        params: &[
+            range("center_x", 0.0, 100.0, 50.0, 1.0),
+            range("center_y", 0.0, 100.0, 50.0, 1.0),
+            range("range", 5.0, 200.0, 50.0, 1.0),
+            range("density", 0.0, 100.0, 60.0, 1.0),
+            color("filter_color", 0xEC8A00),
+        ],
+        apply: super::more::spot_filter,
         reach: no_reach,
     },
     EffectSpec {

@@ -77,33 +77,102 @@ pub const THREE_D: &[EffectSpec] = &[
         apply: sphere,
         reach: no_reach,
     },
+    EffectSpec {
+        id: "zigzag",
+        params: &[
+            range("center_x", 0.0, 100.0, 50.0, 1.0),
+            range("center_y", 0.0, 100.0, 50.0, 1.0),
+            range("amplitude", 0.0, 50.0, 8.0, 1.0),
+            range("period", 4.0, 200.0, 30.0, 1.0),
+        ],
+        apply: super::more::zigzag,
+        reach: no_reach,
+    },
 ];
 
-pub const CUSTOM: &[EffectSpec] = &[EffectSpec {
-    id: "bump_map",
-    params: &[
-        choice(
-            "bump_source",
-            &[
-                "map_image",
-                "map_waves",
-                "map_rings",
-                "map_bricks",
-                "map_noise",
-                "map_zigzag",
-            ],
-            3,
-        ),
-        range("depth", 1.0, 100.0, 20.0, 1.0),
-        range("smoothness", 0.0, 100.0, 30.0, 1.0),
-        angle("light_direction", 135.0),
-        range("brightness", 0.0, 100.0, 50.0, 1.0),
-    ],
-    apply: bump_map,
-    reach: no_reach,
-}];
+pub const CUSTOM: &[EffectSpec] = &[
+    EffectSpec {
+        id: "band_pass",
+        params: &[
+            range("inner_radius", 0.5, 50.0, 1.0, 0.5),
+            range("outer_radius", 1.0, 100.0, 8.0, 0.5),
+            range("percentage", 0.0, 100.0, 100.0, 1.0),
+        ],
+        apply: super::more::band_pass,
+        reach: no_reach,
+    },
+    EffectSpec {
+        id: "bump_map",
+        params: &[
+            choice(
+                "bump_source",
+                &[
+                    "map_image",
+                    "map_waves",
+                    "map_rings",
+                    "map_bricks",
+                    "map_noise",
+                    "map_zigzag",
+                ],
+                3,
+            ),
+            range("depth", 1.0, 100.0, 20.0, 1.0),
+            range("smoothness", 0.0, 100.0, 30.0, 1.0),
+            angle("light_direction", 135.0),
+            range("brightness", 0.0, 100.0, 50.0, 1.0),
+        ],
+        apply: bump_map,
+        reach: no_reach,
+    },
+    EffectSpec {
+        id: "user_defined",
+        params: &[
+            range("k11", -10.0, 10.0, 0.0, 1.0),
+            range("k12", -10.0, 10.0, 0.0, 1.0),
+            range("k13", -10.0, 10.0, 0.0, 1.0),
+            range("k21", -10.0, 10.0, 0.0, 1.0),
+            range("k22", -10.0, 10.0, 1.0, 1.0),
+            range("k23", -10.0, 10.0, 0.0, 1.0),
+            range("k31", -10.0, 10.0, 0.0, 1.0),
+            range("k32", -10.0, 10.0, 0.0, 1.0),
+            range("k33", -10.0, 10.0, 0.0, 1.0),
+            range("divisor", 1.0, 100.0, 1.0, 1.0),
+            range("offset", -255.0, 255.0, 0.0, 1.0),
+        ],
+        apply: super::more::user_defined,
+        reach: no_reach,
+    },
+];
 
 pub const TEXTURE: &[EffectSpec] = &[
+    EffectSpec {
+        id: "brick_wall",
+        params: &[
+            range("width", 4.0, 200.0, 40.0, 1.0),
+            range("height", 3.0, 100.0, 20.0, 1.0),
+            range("intensity", 0.0, 100.0, 60.0, 1.0),
+        ],
+        apply: super::more::brick_wall,
+        reach: no_reach,
+    },
+    EffectSpec {
+        id: "bubbles",
+        params: &[
+            range("size", 2.0, 100.0, 20.0, 1.0),
+            range("density", 0.0, 100.0, 40.0, 1.0),
+        ],
+        apply: super::more::bubbles,
+        reach: no_reach,
+    },
+    EffectSpec {
+        id: "canvas",
+        params: &[
+            range("size", 2.0, 20.0, 6.0, 1.0),
+            range("intensity", 0.0, 100.0, 50.0, 1.0),
+        ],
+        apply: super::more::canvas,
+        reach: no_reach,
+    },
     EffectSpec {
         id: "cobblestone",
         params: &[
@@ -149,6 +218,15 @@ pub const TEXTURE: &[EffectSpec] = &[
         reach: no_reach,
     },
     EffectSpec {
+        id: "plaster_wall",
+        params: &[
+            range("size", 2.0, 100.0, 20.0, 1.0),
+            range("intensity", 0.0, 100.0, 50.0, 1.0),
+        ],
+        apply: super::more::plaster_wall,
+        reach: no_reach,
+    },
+    EffectSpec {
         id: "relief_sculpture",
         params: &[
             range("detail", 1.0, 100.0, 50.0, 1.0),
@@ -161,6 +239,15 @@ pub const TEXTURE: &[EffectSpec] = &[
         reach: no_reach,
     },
     EffectSpec {
+        id: "screen_door",
+        params: &[
+            range("spacing", 2.0, 20.0, 4.0, 1.0),
+            range("opacity", 0.0, 100.0, 40.0, 1.0),
+        ],
+        apply: super::more::screen_door,
+        reach: no_reach,
+    },
+    EffectSpec {
         id: "stone",
         params: &[
             range("detail", 1.0, 100.0, 50.0, 1.0),
@@ -168,6 +255,15 @@ pub const TEXTURE: &[EffectSpec] = &[
             angle("light_direction", 135.0),
         ],
         apply: stone,
+        reach: no_reach,
+    },
+    EffectSpec {
+        id: "underpainting",
+        params: &[
+            range("brush_size", 1.0, 20.0, 6.0, 1.0),
+            range("texture", 0.0, 100.0, 50.0, 1.0),
+        ],
+        apply: super::more::underpainting,
         reach: no_reach,
     },
 ];

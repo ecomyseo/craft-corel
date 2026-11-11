@@ -189,6 +189,18 @@ Estos atajos proceden de las funciones documentadas de la base. No se han vuelto
 
 ## 16. Novedades de esta edición
 
+### Versión 0.42.0 (11 de noviembre de 2026)
+
+**Menús en el orden de la referencia.** Los doce menús y sus submenús siguen el orden y los separadores de la configuración de menús de la referencia. En **Edición** están **Traer al foco** y **Salir del modo de enfoque**; en **Mapas de bits**, el **Laboratorio de ajuste de imagen**, **Eliminar artefactos JPEG** (quita los bloques de una foto JPEG muy comprimida sin borrar sus bordes) y las órdenes de calco en el propio menú; **Objeto > Perspectiva** reúne Añadir perspectiva y Dibujar en perspectiva.
+
+**22 efectos nuevos** en **Efectos**, cada uno en su grupo: Zigzag; Sombras/medios tonos/iluminaciones, Tinte/temperatura, Escala de grises e Intensidad; Toques; Afinar desenfoque y Difuminar; Destello de lente, Efectos de iluminación y Filtro de foco; Afinar nitidez; Paso de banda y Definido por el usuario; Cizalla; Afinar ruido y Ruido estéreo 3D; Pared de ladrillo, Burbujas, Lienzo, Pared de yeso, Puerta mosquitera y Pintura de fondo; Umbral.
+
+**Filas nuevas**: en PowerClip, crear un marco vacío y centrar, ajustar, llenar o estirar el contenido; en Alinear, centrar en la página en horizontal o en vertical y alinear con la cuadrícula de píxeles; **Mostrar objetos**; en los códigos de formato, el cuarto de espacio, la tabulación y el guion de no separación; un marco de texto hecho con el objeto seleccionado; en Paletas, añadir los colores del documento y cerrar todas. **Mostrar todo** aparece atenuado si no hay nada oculto.
+
+**Escáner por TWAIN**: ver el apartado Adquirir imagen.
+
+### Versión 0.41.1 (10 de noviembre de 2026)
+
 Esta edición, del 10 de noviembre de 2026, añade menús del botón derecho que faltaban, la edición de mallas con tiradores, los rollovers, la adquisición de imágenes y varias correcciones de deshacer. Las capturas son de Craft Plumilla, dibujadas sin abrir ventanas a partir de la propia interfaz.
 
 ### Menú del botón derecho en la página y en el escritorio
@@ -249,7 +261,7 @@ Los pinceles Suavizar, Manchar, Remolino, Atraer y repeler, Difuminar y Agreste 
 
 ### Adquirir imagen
 
-**Archivo > Adquirir imagen** usa el escáner o la cámara a través de WIA: **Adquirir** abre el diálogo del dispositivo y las imágenes obtenidas se colocan como al importar. Sin ningún dispositivo conectado, avisa al momento. El origen TWAIN aparece desactivado porque no está disponible en esta edición.
+**Archivo > Adquirir imagen** usa el escáner o la cámara a través de WIA o de TWAIN (elige el origen en el mismo submenú): **Adquirir** abre el diálogo del dispositivo y las imágenes obtenidas se colocan como al importar. Con TWAIN, si hay varios escáneres instalados, primero sale el diálogo para elegir el origen. Sin ningún dispositivo conectado, avisa al momento.
 
 ### Ortografía y opciones de texto
 
@@ -274,7 +286,7 @@ Validada significa comprobada en el recorrido indicado, no en todos sus usos. He
 | Degradados, patrones, efectos y transparencias | Heredada; cada intercambio debe comprobar su resultado. |
 | Importación/exportación general | Códecs reales y recorridos propios comprobados; fidelidad y conservación varían por contenido. CDR/CMX parciales. |
 | Impresión, preimpresión y mezcla de datos | Heredada o parcial; sin prueba de impresora ni flujo de imprenta completo. |
-| Lápiz, tableta, escáner y complementos | Escáner y cámara por WIA comprobados sin dispositivo (avisa al momento); TWAIN desactivado. Sin validación de hardware real aquí; no hay un anfitrión de filtros externos. |
+| Lápiz, tableta, escáner y complementos | Escáner y cámara por WIA y por TWAIN comprobados sin dispositivo (avisan al momento); TWAIN probado además con un gestor de prueba que entrega imágenes. Sin validación de hardware real aquí; no hay un anfitrión de filtros externos. |
 | Navegador y Android | Existen en la base; compilar WASM no certifica ejecución en navegador ni funcionamiento móvil. |
 | Unidades y reglas | Validada en fuente: ejes independientes y conservación propia de tres preferencias. Producto candidato en revisión; estándar CDR, píxel y cícero no tienen equivalencia externa completa. |
 

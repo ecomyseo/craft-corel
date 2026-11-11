@@ -37,6 +37,16 @@ later, and removing the last one gives the original back.
   panel's tab is in the shown docker column
   (`ui::menus::tests::effects_menu_checks_the_open_effect_panels`).
 - The bitmap groups are on for any selection (see "On vector objects").
+- The Bitmaps menu opens two of them after Straighten Image, as the
+  reference's Bitmaps menu does: Image Adjustment Lab (the Image
+  Adjustments effect and its lab dialog) and Remove JPEG Artifacts, an
+  effect of its own with one setting, Amount: the steps between the 8 by
+  8 blocks of a strongly compressed JPEG are smoothed where both sides
+  are flat and the step is small (a real edge of the picture on a block
+  border stays), then the ringing inside the blocks is calmed by a blur
+  that only mixes close values; at 0 nothing changes
+  (`fx::adjust::jpeg_tests::the_blocks_of_a_compressed_jpeg_go`,
+  `fx::preview::tests::the_bitmaps_menu_opens_the_lab_and_the_jpeg_cleaner`).
 - An item without settings (Auto Adjust, Desaturate, Invert Colors)
   adds the effect to every selected object at once. The others open the
   effect's dialog; OK adds it to every selected bitmap. Either way the
@@ -191,7 +201,7 @@ transparent areas.
 | Auto Adjust | none | Each channel stretched between the levels that cut 0.5 % of the opaque pixels at either end. |
 | Image Adjustments | Black point 0 (0 to 254); White point 255 (1 to 255); Temperature 0 (-100 to 100); Tint 0 (-100 to 100); Saturation 0 (-100 to 100); Brightness 0 (-100 to 100); Contrast 0 (-100 to 100); Highlights 0 (-100 to 100); Shadows 0 (-100 to 100); Midtones 0 (-100 to 100) | In this order (settings / 100, values 0 to 1): black and white points map to 0 and 1; temperature `t` scales red by `1 - 0.25 t` and blue by `1 + 0.25 t`; tint `n` scales green by `1 + 0.2 n`, red and blue by `1 - 0.1 n`; saturation moves each channel away from the luminance by `1 + s`; brightness is the gamma `v^(2^-b)`; contrast scales about 0.5 by `1 + c`; then `0.35 (h smoothstep(0.5, 1, L) + s (1 - smoothstep(0, 0.5, L)) + m (1 - abs(2 L - 1)))` is added for highlights, shadows and midtones. |
 | Contrast Enhancement | Channel: **Master**, Red, Green, Blue; Input low 0 (0 to 254); Input high 255 (1 to 255); Output low 0 (0 to 255); Output high 255 (0 to 255); Gamma 1 (0.1 to 10) | Levels: `t = clamp((v - in_low) / (in_high - in_low))^(1 / gamma)`, result `out_low + (out_high - out_low) t`, on every channel (Master) or the channel chosen. |
-| Local Equalization | Width 20 (2 to 255); Height 20 (2 to 255); Lock width and height (on) | Histogram equalization of the brightness in tiles of Width x Height pixels (Width x Width when locked), each level clipped at 1/64 of the tile's pixels, blended bilinearly between tile centres; colours scale with their brightness so hues stay. |
+| Local Equalization (in the Contour group, last, as the reference has it) | Width 20 (2 to 255); Height 20 (2 to 255); Lock width and height (on) | Histogram equalization of the brightness in tiles of Width x Height pixels (Width x Width when locked), each level clipped at 1/64 of the tile's pixels, blended bilinearly between tile centres; colours scale with their brightness so hues stay. |
 | Target Color Balance | Channel: **Master**, Red, Green, Blue; Always adjust all channels (off); Shadow sample (#000000); Shadow target (#000000); Midtone sample (#808080); Midtone target (#808080); Highlight sample (#FFFFFF); Highlight target (#FFFFFF) | Per channel, straight segments through (0, 0), each sample to its target, and (255, 255); with Red, Green or Blue chosen only that channel changes, unless Always adjust all channels. |
 | Tone Curve | curves (see below) | A master curve, then red, green and blue curves, each in its style: Curve (smooth monotone cubic through the nodes), Straight, Freehand (drawn, kept as straight segments every 4 levels) or Gamma (`255 (x / 255)^(1 / gamma)`). |
 | Brightness/Contrast/Intensity | Brightness 0 (-100 to 100); Contrast 0 (-100 to 100); Intensity 0 (-100 to 100) | On values 0 to 1 with the settings / 100: `x = v + b / 2`, then `(x - 0.5)(1 + c) + 0.5`, then `x (1 + i / 2)`. |
@@ -555,3 +565,31 @@ Image > Color Mask opens the docker:
 - Apply, on the selected bitmaps, one undo step each; enabled with a
   bitmap selected and a slot in use.
 - Checks: `bitmap_fx::tests::a_bitmap_mask_hides_or_keeps_its_colours`.
+
+## Effects added from the reference's Effects menu
+
+In their groups at the place the reference's menu configuration gives them
+(`fx/more.rs`; `fx::more::tests::the_new_effects_do_what_they_say` measures
+each). The exact look of each in the reference is pending contrast in the VM.
+
+| Group | Effect | Settings | What it does |
+|---|---|---|---|
+| 3D Effects | Zigzag | centre, amplitude, period | rings of waves out from the centre, fading to the edges |
+| Adjust | Shadows/Midtones/Highlights | three sliders −100..100 | each tonal range lighter or darker on its own |
+| Adjust | Tint/Temperature | temperature, tint | cooler or warmer, greener or more magenta |
+| Adjust | Grayscale | reds, yellows, greens, cyans, blues, magentas | grey with a weight per hue family |
+| Adjust | Vibrance | amount | more saturation where there is little |
+| Art Strokes | Dabble | brush size, coarseness | the picture dabbed on with a brush |
+| Blur | Tune Blur | method (Gaussian, average, soft), radius | the blurs as one effect |
+| Blur | Feather | width | the edges of the picture and of its transparent parts fade out |
+| Camera | Lens Flare | centre, brightness | glow, rays and rings of a bright light in a lens |
+| Camera | Lighting Effects | centre, range, intensity, colour | a coloured spotlight; the rest keeps a little light |
+| Camera | Spot Filter | centre, range, density, colour | a colour filter strongest at a point |
+| Correction | Tune Sharpness | method, amount | unsharp masking three ways |
+| Custom | Band Pass | inner and outer radius, percentage | only the detail between two sizes, on mid grey |
+| Custom | User Defined | 3 by 3 kernel, divisor, offset | a convolution of the user's |
+| Distort | Shear | amount | rows moved sideways, top one way and bottom the other |
+| Noise | Tune Noise | method (uniform, Gaussian, average), amount | noise added, or taken away |
+| Noise | 3D Stereo Noise | pattern width, depth | a random-dot stereogram of the picture's brightness |
+| Texture | Brick Wall, Bubbles, Canvas, Plaster Wall, Screen Door, Underpainting | size, intensity (and density, opacity, texture) | the picture on that surface |
+| Transform | Threshold | level | black or white |

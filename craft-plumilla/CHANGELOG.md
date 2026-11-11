@@ -4,6 +4,15 @@ Versions follow the tags of this repository; every push to `main` also
 publishes a nightly build. [`docs/features.md`](docs/features.md) has the
 full, row-by-row status.
 
+## 0.42.0 (2026-11-11)
+
+- 22 new bitmap effects where the reference's Effects menu has them: Zigzag; Shadows/Midtones/Highlights, Tint/Temperature, Grayscale and Vibrance; Dabble; Tune Blur and Feather; Lens Flare, Lighting Effects and Spot Filter; Tune Sharpness; Band Pass and User Defined; Shear; Tune Noise and 3D Stereo Noise; Brick Wall, Bubbles, Canvas, Plaster Wall, Screen Door and Underpainting; Threshold.
+- New menu rows: PowerClip > Create Empty Clip Frame and the four ways to fit the contents; Align > Center to Page Horizontally/Vertically and Align with Pixel Grid; Hide > Show Objects; Insert Formatting Code > Quarter Em Space, Tab and Nonbreaking Hyphen; Paragraph Text Frame > Create Empty Text Frame; Color Palettes > Add from Document and Close All Palettes. Show All is greyed when nothing is hidden.
+- The submenus follow the reference's order and separators too: Export For, Insert Page Number, Insert, PowerClip, Copy Effect, Align and Distribute, Order, Adjust, Insert Formatting Code, Paragraph Text Frame, Workspace and Color Palettes; Local Equalization moves to Contour, and Object > Perspective holds Add Perspective and Draw in Perspective.
+- Edit > Bring into Focus and Exit Focus Mode, and Bitmaps > Image Adjustment Lab and Remove JPEG Artifacts (a new effect that takes away the 8 by 8 blocks of a strongly compressed JPEG and keeps the real edges), where the reference's menus have them.
+- The order and separators of the menus follow the reference's menu configuration: Edit keeps Cut to Delete together, Object lists Create and Insert before AI Generate, and Bitmaps has the trace commands (Quick Trace, Repeat Last Trace, Last Trace Settings, Centerline and Outline Trace) in the menu itself.
+- File > Acquire Image > TWAIN works where the TWAIN source manager is installed: the scanner's own dialog, every picture it gives imported as with WIA; with several sources the Select Source dialog chooses.
+
 ## 0.41.1 (2026-11-10)
 
 - The editor is now called Craft Plumilla (it was Craft Corel), so that its name does not use a trademark of another company. Programs, installer, settings folder and links take the new name; preferences of a copy with the old name carry over the first time.

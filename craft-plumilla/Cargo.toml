@@ -18,7 +18,7 @@ members = [
 ]
 
 [workspace.package]
-version = "0.41.1"
+version = "0.42.0"
 edition = "2021"
 authors = ["TraceDraw members and contributors"]
 license = "MIT OR Apache-2.0"

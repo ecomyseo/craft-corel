@@ -12,6 +12,7 @@ pub mod camera;
 pub mod color;
 pub mod creative;
 pub mod distort;
+pub mod more;
 pub mod noise;
 pub mod preview;
 pub mod texture;
@@ -189,6 +190,7 @@ impl P<'_> {
 pub fn catalog() -> impl Iterator<Item = &'static EffectSpec> {
     adjust::EFFECTS
         .iter()
+        .chain(adjust::BITMAPS.iter())
         .chain(adjust::TRANSFORM.iter())
         .chain(adjust::CORRECTION.iter())
         .chain(texture::THREE_D.iter())
@@ -203,6 +205,21 @@ pub fn catalog() -> impl Iterator<Item = &'static EffectSpec> {
         .chain(noise::NOISE.iter())
         .chain(noise::SHARPEN.iter())
         .chain(texture::TEXTURE.iter())
+}
+
+/// Effects with a separator line above them in their group, where the
+/// reference's menu configuration has one.
+pub fn separated_before(id: &str) -> bool {
+    matches!(
+        id,
+        "image_adjustments"
+            | "contrast_enhancement"
+            | "shadows_midtones_highlights"
+            | "tint_temperature"
+            | "channel_mixer"
+            | "directional_smooth"
+            | "add_noise"
+    )
 }
 
 /// The Effects menu's bitmap groups: (i18n key, effects).
@@ -273,7 +290,9 @@ pub fn apply_effect(img: &RgbaImage, e: &BitmapEffect) -> RgbaImage {
 
 /// Settings measured in pixels: a copy of the bitmap at another scale
 /// (a preview) runs them scaled so it looks like the result.
-const PIXEL_PARAMS: [&str; 16] = [
+const PIXEL_PARAMS: [&str; 18] = [
+    "inner_radius",
+    "outer_radius",
     "radius",
     "distance",
     "size",
@@ -773,9 +792,9 @@ mod tests {
             }
         }
         assert!(ids.len() >= 80, "{}", ids.len());
-        // Every effect is in a group.
+        // Every effect is in a group, or in the Bitmaps menu.
         let grouped: usize = groups().iter().map(|g| g.1.len()).sum();
-        assert_eq!(grouped, ids.len());
+        assert_eq!(grouped + adjust::BITMAPS.len(), ids.len());
     }
 
     /// Largest channel difference between two images of one size.

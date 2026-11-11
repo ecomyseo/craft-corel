@@ -284,9 +284,9 @@ craft-plumilla-cli convert dibujo.tdraw salida.svg
 <td>4 pruebas del núcleo, 4 de la aplicación y 1 de HTML; mutaciones 7 de 7</td>
 </tr>
 <tr>
-<td>Adquirir imagen por WIA</td>
-<td><code>apps/tracedraw/src/acquire.rs</code> (COM <code>IWiaDevMgr2::GetImageDlg</code>), TWAIN desactivado</td>
-<td>llamada real sin dispositivo en escritorio privado</td>
+<td>Adquirir imagen por WIA y TWAIN</td>
+<td><code>apps/tracedraw/src/acquire.rs</code> (COM <code>IWiaDevMgr2::GetImageDlg</code>) y <code>acquire/twain.rs</code> (<code>TWAINDSM.dll</code>, <code>DSM_Entry</code>, transferencia nativa a BMP)</td>
+<td>llamadas reales sin dispositivo en escritorio privado; TWAIN con un gestor de prueba (una fuente, varias, versión 2, cancelar, ninguna) y 8 mutaciones</td>
 </tr>
 <tr>
 <td>Menús del botón derecho: página, escritorio, ortografía, mezcla, malla, estilos</td>

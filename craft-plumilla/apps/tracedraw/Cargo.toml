@@ -106,8 +106,9 @@ winit = { version = "0.30", default-features = false }
 # Where the pointer is while files are dragged over the window: the
 # system drag sends no pointer moves (#1142).
 [target.'cfg(windows)'.dependencies]
-# The spell checker of Windows (COM, #1405).
-windows-sys = { version = "0.52", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging", "Win32_System_Com"] }
+# The spell checker of Windows (COM, #1405) and TWAIN's source manager
+# (loaded, with its pictures in global memory).
+windows-sys = { version = "0.52", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging", "Win32_System_Com", "Win32_System_LibraryLoader", "Win32_System_Memory", "Win32_System_Threading"] }
 # The window's message hook: characters input methods send that the
 # windowing layer drops (#1151). The same winit eframe uses.
 winit = { version = "0.30", default-features = false }

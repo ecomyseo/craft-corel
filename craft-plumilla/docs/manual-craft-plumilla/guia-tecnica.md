@@ -194,7 +194,7 @@ La revisión OSV comunicada para esta edición abarca 557 paquetes, incluidos do
 | Pieza | Dónde | Comprobación |
 |---|---|---|
 | Rollover con tres estados | `crates/core/src/document.rs` (`Rollover`), `command.rs` (crear, estado, separar, destino), `apps/tracedraw/src/rollover.rs`, HTML en `crates/io/src/svg.rs` y `html.rs` | 4 pruebas del núcleo, 4 de la aplicación y 1 de HTML; mutaciones 7 de 7 |
-| Adquirir imagen por WIA | `apps/tracedraw/src/acquire.rs` (COM `IWiaDevMgr2::GetImageDlg`), TWAIN desactivado | llamada real sin dispositivo en escritorio privado |
+| Adquirir imagen por WIA y TWAIN | `apps/tracedraw/src/acquire.rs` (COM `IWiaDevMgr2::GetImageDlg`) y `acquire/twain.rs` (`TWAINDSM.dll`, `DSM_Entry`, transferencia nativa a BMP) | llamadas reales sin dispositivo en escritorio privado; TWAIN con un gestor de prueba (una fuente, varias, versión 2, cancelar, ninguna) y 8 mutaciones |
 | Menús del botón derecho: página, escritorio, ortografía, mezcla, malla, estilos | `apps/tracedraw/src/ui/context.rs`, `spell_assist.rs`, `blend_link.rs`, `styles.rs` | `page_desktop_menu_tests`, `spelling_menu_tests`, `blend_and_mesh_menu_tests`, `apply_to_style_and_revert_to_style`; mutaciones 3 de 3, 8 de 8 y 2 de 2 |
 | Tiradores y tipos de nodo de malla | `MeshNode::kind` y `Mesh::set_node_handle`, `node_to_line`, `node_to_curve`, `set_node_kind` en `crates/core/src/style.rs`; `mesh_tool.rs` (`MESH_HANDLE_BASE`) | `mesh_handle_tests` por puntero; mutaciones 4 de 4 |
 | Un paso de deshacer por gesto | `Engine::join_group` en pinceles (`brushes.rs`), arrastre de nodos de efecto (`interaction2.rs`), `App::as_one_step` en herramientas de 3 puntos | `tools_result_tests`: las 64 herramientas con resultado, deshacer, rehacer, guardado y reapertura |

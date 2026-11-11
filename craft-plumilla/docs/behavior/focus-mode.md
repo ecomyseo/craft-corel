@@ -8,6 +8,9 @@ ungrouping it, with the rest of the drawing faded behind it.
 - Double-click a group or a clip frame with the Pick tool (Tools > Options >
   Workspace > Edit: "Double-click to activate focus mode", on by
   default).
+- Edit > Bring into Focus (one object selected) and Edit > Exit Focus Mode,
+  after Repeat as in the reference's Edit menu
+  (`focus::tests::the_edit_menu_brings_into_focus_and_out`).
 - Right-click an object > Bring into Focus. For a plain object inside a
   group, the group that holds it gets the focus and the object stays
   selected.

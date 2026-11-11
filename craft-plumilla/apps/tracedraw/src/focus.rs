@@ -177,4 +177,32 @@ mod tests {
         let faded = img.pixel(35, 25).expect("px").alpha();
         assert!((40..=60).contains(&faded), "{faded}");
     }
+
+    /// Edit > Bring into Focus and Exit Focus Mode: offered as the
+    /// reference's Edit menu has them, each doing what its name says and
+    /// greyed when it has nothing to do.
+    #[test]
+    fn the_edit_menu_brings_into_focus_and_out() {
+        use crate::ui::menus::run_command;
+        crate::i18n::set_language("en");
+        let mut app = App::headless();
+        let ctx = crate::theme::ui_context();
+        let mut out = ctx.run_ui(egui::RawInput::default(), |_| {});
+        out.textures_delta.clear();
+        let a = rect_at(&mut app, 10.0);
+        let b = rect_at(&mut app, 30.0);
+        app.select(Vec::new());
+        assert!(!run_command(&mut app, &ctx, "menu.edit.bring_into_focus"), "nothing selected");
+        assert!(!run_command(&mut app, &ctx, "menu.edit.exit_focus_mode"), "not in focus mode");
+        app.select(vec![a, b]);
+        assert!(!run_command(&mut app, &ctx, "menu.edit.bring_into_focus"), "two objects");
+        app.group_selection();
+        let group = app.selection[0];
+        assert!(run_command(&mut app, &ctx, "menu.edit.bring_into_focus"));
+        assert_eq!(app.focus_target(), Some(group));
+        assert!(app.selection.is_empty(), "its parts are picked now");
+        assert!(run_command(&mut app, &ctx, "menu.edit.exit_focus_mode"));
+        assert_eq!(app.focus_target(), None);
+        assert!(!run_command(&mut app, &ctx, "menu.edit.exit_focus_mode"));
+    }
 }

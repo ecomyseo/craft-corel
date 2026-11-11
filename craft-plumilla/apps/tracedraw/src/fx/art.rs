@@ -45,6 +45,15 @@ pub const EFFECTS: &[EffectSpec] = &[
         reach: no_reach,
     },
     EffectSpec {
+        id: "dabble",
+        params: &[
+            range("brush_size", 1.0, 20.0, 5.0, 1.0),
+            range("coarseness", 0.0, 100.0, 50.0, 1.0),
+        ],
+        apply: super::more::dabble,
+        reach: no_reach,
+    },
+    EffectSpec {
         id: "impressionist",
         params: &[
             choice("style", &["strokes", "dabs"], 0),

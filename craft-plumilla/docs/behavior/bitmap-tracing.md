@@ -31,10 +31,11 @@
 
 ## Commands
 
-Image > Trace > Automatic, Repeat Last Trace (the selected bitmaps traced
+Bitmaps > Quick Trace, Repeat Last Trace (the selected bitmaps traced
 with the last trace's settings, no dialog), Open Last Trace Settings
-(the dialog on them), Trace > Centerline and Trace > Outline with their
-presets; a bitmap's right-click menu has the same (#452, `ops2::tests::the_last_trace_can_be_repeated_and_reopened`).
+(the dialog on them), Centerline Trace and Outline Trace with their
+presets, in the Bitmaps menu itself as the reference's menu configuration
+has them; a bitmap's right-click menu has the same (#452, `ops2::tests::the_last_trace_can_be_repeated_and_reopened`).
 The last trace is kept for the session.
 
 ## The dialog

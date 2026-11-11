@@ -96,6 +96,14 @@ pub const EFFECTS: &[EffectSpec] = &[
         reach: no_reach,
     },
     EffectSpec {
+        id: "shear",
+        params: &[
+            range("amount", -100.0, 100.0, 30.0, 1.0),
+        ],
+        apply: super::more::shear,
+        reach: no_reach,
+    },
+    EffectSpec {
         id: "swirl",
         params: &[
             choice("swirl_direction", &["clockwise", "counterclockwise"], 0),

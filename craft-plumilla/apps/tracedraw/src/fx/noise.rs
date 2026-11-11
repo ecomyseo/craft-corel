@@ -6,6 +6,15 @@ use image::{Rgba, RgbaImage};
 
 pub const NOISE: &[EffectSpec] = &[
     EffectSpec {
+        id: "tune_noise",
+        params: &[
+            choice("method", &["uniform", "gaussian", "average"], 0),
+            range("amount", 0.0, 100.0, 30.0, 1.0),
+        ],
+        apply: super::more::tune_noise,
+        reach: no_reach,
+    },
+    EffectSpec {
         id: "add_noise",
         params: &[
             choice("noise_type", &["gaussian", "spike", "uniform"], 0),
@@ -15,6 +24,15 @@ pub const NOISE: &[EffectSpec] = &[
             color("noise_color", 0x000000),
         ],
         apply: add_noise,
+        reach: no_reach,
+    },
+    EffectSpec {
+        id: "three_d_stereo_noise",
+        params: &[
+            range("spacing", 8.0, 200.0, 60.0, 1.0),
+            range("depth", 0.0, 40.0, 12.0, 1.0),
+        ],
+        apply: super::more::three_d_stereo_noise,
         reach: no_reach,
     },
     EffectSpec {

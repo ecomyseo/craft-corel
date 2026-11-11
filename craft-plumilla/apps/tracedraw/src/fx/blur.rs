@@ -6,9 +6,26 @@ use image::{Rgba, RgbaImage};
 
 pub const EFFECTS: &[EffectSpec] = &[
     EffectSpec {
+        id: "tune_blur",
+        params: &[
+            choice("method", &["gaussian", "average", "soft"], 0),
+            range("radius", 0.5, 30.0, 3.0, 0.5),
+        ],
+        apply: super::more::tune_blur,
+        reach: no_reach,
+    },
+    EffectSpec {
         id: "directional_smooth",
         params: &[range("percentage", 1.0, 100.0, 50.0, 1.0)],
         apply: directional_smooth,
+        reach: no_reach,
+    },
+    EffectSpec {
+        id: "feather",
+        params: &[
+            range("width", 1.0, 100.0, 10.0, 1.0),
+        ],
+        apply: super::more::feather,
         reach: no_reach,
     },
     EffectSpec {

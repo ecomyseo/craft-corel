@@ -43,16 +43,6 @@ pub const EFFECTS: &[EffectSpec] = &[
         reach: no_reach,
     },
     EffectSpec {
-        id: "local_equalization",
-        params: &[
-            range("width", 2.0, 255.0, 20.0, 1.0),
-            range("height", 2.0, 255.0, 20.0, 1.0),
-            check("lock", true),
-        ],
-        apply: local_equalization,
-        reach: no_reach,
-    },
-    EffectSpec {
         id: "target_balance",
         params: &[
             choice("channel", &RGB_CHANNELS, 0),
@@ -71,6 +61,16 @@ pub const EFFECTS: &[EffectSpec] = &[
         id: "tone_curve",
         params: &[],
         apply: tone_curve,
+        reach: no_reach,
+    },
+    EffectSpec {
+        id: "shadows_midtones_highlights",
+        params: &[
+            range("shadows", -100.0, 100.0, 0.0, 1.0),
+            range("midtones", -100.0, 100.0, 0.0, 1.0),
+            range("highlights", -100.0, 100.0, 0.0, 1.0),
+        ],
+        apply: super::more::shadows_midtones_highlights,
         reach: no_reach,
     },
     EffectSpec {
@@ -104,6 +104,15 @@ pub const EFFECTS: &[EffectSpec] = &[
         reach: no_reach,
     },
     EffectSpec {
+        id: "tint_temperature",
+        params: &[
+            range("temperature", -100.0, 100.0, 0.0, 1.0),
+            range("tint", -100.0, 100.0, 0.0, 1.0),
+        ],
+        apply: super::more::tint_temperature,
+        reach: no_reach,
+    },
+    EffectSpec {
         id: "hue_saturation_lightness",
         params: &[
             choice("channel", &CHANNELS, 0),
@@ -112,6 +121,27 @@ pub const EFFECTS: &[EffectSpec] = &[
             range("lightness", -100.0, 100.0, 0.0, 1.0),
         ],
         apply: hsl,
+        reach: no_reach,
+    },
+    EffectSpec {
+        id: "grayscale",
+        params: &[
+            range("red", -200.0, 300.0, 40.0, 1.0),
+            range("yellow", -200.0, 300.0, 60.0, 1.0),
+            range("green", -200.0, 300.0, 40.0, 1.0),
+            range("cyan", -200.0, 300.0, 60.0, 1.0),
+            range("blue", -200.0, 300.0, 20.0, 1.0),
+            range("magenta", -200.0, 300.0, 80.0, 1.0),
+        ],
+        apply: super::more::grayscale,
+        reach: no_reach,
+    },
+    EffectSpec {
+        id: "vibrance",
+        params: &[
+            range("amount", -100.0, 100.0, 50.0, 1.0),
+        ],
+        apply: super::more::vibrance,
         reach: no_reach,
     },
     EffectSpec {
@@ -189,17 +219,44 @@ pub const TRANSFORM: &[EffectSpec] = &[
         apply: posterize,
         reach: no_reach,
     },
+    EffectSpec {
+        id: "threshold",
+        params: &[
+            range("level", 0.0, 255.0, 128.0, 1.0),
+        ],
+        apply: super::more::threshold,
+        reach: no_reach,
+    },
 ];
 
-pub const CORRECTION: &[EffectSpec] = &[EffectSpec {
-    id: "dust_and_scratch",
-    params: &[
-        range("radius", 1.0, 20.0, 2.0, 1.0),
-        range("threshold", 0.0, 255.0, 32.0, 1.0),
-    ],
-    apply: dust_and_scratch,
+/// Effects reached from the Bitmaps menu only (no Effects group).
+pub const BITMAPS: &[EffectSpec] = &[EffectSpec {
+    id: "jpeg_artifact_removal",
+    params: &[range("amount", 0.0, 100.0, 60.0, 1.0)],
+    apply: jpeg_artifact_removal,
     reach: no_reach,
 }];
+
+pub const CORRECTION: &[EffectSpec] = &[
+    EffectSpec {
+        id: "dust_and_scratch",
+        params: &[
+            range("radius", 1.0, 20.0, 2.0, 1.0),
+            range("threshold", 0.0, 255.0, 32.0, 1.0),
+        ],
+        apply: dust_and_scratch,
+        reach: no_reach,
+    },
+    EffectSpec {
+        id: "tune_sharpness",
+        params: &[
+            choice("method", &["gaussian", "average", "soft"], 0),
+            range("amount", 0.0, 300.0, 100.0, 1.0),
+        ],
+        apply: super::more::tune_sharpness,
+        reach: no_reach,
+    },
+];
 
 pub const CHANNELS: [&str; 8] = [
     "master",
@@ -964,4 +1021,161 @@ pub fn dust_and_scratch(img: &RgbaImage, p: &P) -> RgbaImage {
             *q
         }
     })
+}
+
+/// Bitmaps > Remove JPEG Artifacts: the 8 by 8 blocks a strongly
+/// compressed JPEG shows are smoothed across their edges where the step
+/// between two blocks is small and both sides are flat (a real edge of
+/// the picture is left alone), then the ringing inside the blocks is
+/// calmed by a blur that only mixes neighbours close in value.
+pub fn jpeg_artifact_removal(img: &RgbaImage, p: &P) -> RgbaImage {
+    let a = (p.f32("amount") / 100.0).clamp(0.0, 1.0);
+    if a <= 0.0 {
+        return img.clone();
+    }
+    let (w, h) = img.dimensions();
+    let at = |x: u32, y: u32| (y * w + x) as usize;
+    let mut px: Vec<[f32; 3]> = img
+        .pixels()
+        .map(|q| [q[0] as f32, q[1] as f32, q[2] as f32])
+        .collect();
+    // The largest step between two blocks taken as compression.
+    let t = 6.0 + 30.0 * a;
+    for across_columns in [true, false] {
+        let (lines, along) = if across_columns { (h, w) } else { (w, h) };
+        let mut e = 8;
+        while e + 1 < along {
+            for l in 0..lines {
+                let i = |k: u32| if across_columns { at(k, l) } else { at(l, k) };
+                let (p1, p0, q0, q1) = (i(e - 2), i(e - 1), i(e), i(e + 1));
+                for c in 0..3 {
+                    let step = px[q0][c] - px[p0][c];
+                    if step.abs() < t
+                        && (px[p0][c] - px[p1][c]).abs() < t / 2.0
+                        && (px[q1][c] - px[q0][c]).abs() < t / 2.0
+                    {
+                        let d = step * a;
+                        px[p1][c] += d / 6.0;
+                        px[p0][c] += d / 3.0;
+                        px[q0][c] -= d / 3.0;
+                        px[q1][c] -= d / 6.0;
+                    }
+                }
+            }
+            e += 8;
+        }
+    }
+    let src = px.clone();
+    let r = 4.0 + 16.0 * a;
+    for y in 0..h {
+        for x in 0..w {
+            let c0 = src[at(x, y)];
+            let (mut sum, mut n) = ([0f32; 3], [0f32; 3]);
+            for ny in y.saturating_sub(1)..=(y + 1).min(h - 1) {
+                for nx in x.saturating_sub(1)..=(x + 1).min(w - 1) {
+                    let c1 = src[at(nx, ny)];
+                    for c in 0..3 {
+                        if (c1[c] - c0[c]).abs() <= r {
+                            sum[c] += c1[c];
+                            n[c] += 1.0;
+                        }
+                    }
+                }
+            }
+            for c in 0..3 {
+                px[at(x, y)][c] = c0[c] + (sum[c] / n[c] - c0[c]) * a;
+            }
+        }
+    }
+    RgbaImage::from_fn(w, h, |x, y| {
+        let v = px[at(x, y)];
+        let b = |f: f32| f.round().clamp(0.0, 255.0) as u8;
+        Rgba([b(v[0]), b(v[1]), b(v[2]), img.get_pixel(x, y)[3]])
+    })
+}
+
+#[cfg(test)]
+mod jpeg_tests {
+    use super::*;
+
+    /// How much the 8 by 8 grid shows: the mean step across block edges
+    /// less the mean step between neighbours inside the blocks.
+    fn blockiness(img: &RgbaImage) -> f32 {
+        let (w, h) = img.dimensions();
+        let (mut edge, mut ne, mut inner, mut ni) = (0f32, 0f32, 0f32, 0f32);
+        for y in 0..h {
+            for x in 1..w {
+                let d: f32 = (0..3)
+                    .map(|c| (img.get_pixel(x, y)[c] as f32 - img.get_pixel(x - 1, y)[c] as f32).abs())
+                    .sum();
+                if x % 8 == 0 {
+                    edge += d;
+                    ne += 1.0;
+                } else {
+                    inner += d;
+                    ni += 1.0;
+                }
+            }
+        }
+        edge / ne - inner / ni
+    }
+
+    fn error(a: &RgbaImage, b: &RgbaImage) -> f32 {
+        let n = (a.width() * a.height() * 3) as f32;
+        a.pixels()
+            .zip(b.pixels())
+            .map(|(p, q)| (0..3).map(|c| (p[c] as f32 - q[c] as f32).abs()).sum::<f32>())
+            .sum::<f32>()
+            / n
+    }
+
+    /// A smooth picture saved as a strongly compressed JPEG shows its
+    /// blocks; the effect takes most of the grid away and brings the
+    /// picture closer to the original, and at 0 changes nothing.
+    #[test]
+    fn the_blocks_of_a_compressed_jpeg_go() {
+        let original = RgbaImage::from_fn(96, 64, |x, y| {
+            let r = (x as f32 / 95.0 * 200.0 + 20.0) as u8;
+            let g = (y as f32 / 63.0 * 160.0 + 40.0) as u8;
+            let b = ((x + y) as f32 / 158.0 * 120.0 + 60.0) as u8;
+            Rgba([r, g, b, 255])
+        });
+        let mut bytes = Vec::new();
+        let rgb = image::DynamicImage::ImageRgba8(original.clone()).to_rgb8();
+        image::codecs::jpeg::JpegEncoder::new_with_quality(&mut bytes, 8)
+            .encode_image(&rgb)
+            .expect("jpeg");
+        let jpeg = image::load_from_memory(&bytes).expect("decode").to_rgba8();
+        let spec = super::super::spec("jpeg_artifact_removal").expect("effect");
+        let run = |amount: f64| {
+            let mut values = std::collections::BTreeMap::new();
+            values.insert("amount".to_string(), amount);
+            jpeg_artifact_removal(&jpeg, &P { spec, values: &values })
+        };
+        let before = blockiness(&jpeg);
+        assert!(before > 3.0, "the JPEG shows its blocks: {before}");
+        let cleaned = run(60.0);
+        let after = blockiness(&cleaned);
+        assert!(after < before * 0.6, "blockiness {before} -> {after}");
+        assert!(
+            error(&cleaned, &original) < error(&jpeg, &original),
+            "closer to the original: {} -> {}",
+            error(&jpeg, &original),
+            error(&cleaned, &original)
+        );
+        assert_eq!(run(0.0), jpeg);
+        // A real edge of the picture that falls on a block border stays.
+        let edge = RgbaImage::from_fn(64, 16, |x, _| {
+            if x < 48 {
+                Rgba([20, 20, 20, 255])
+            } else {
+                Rgba([235, 235, 235, 255])
+            }
+        });
+        let mut values = std::collections::BTreeMap::new();
+        values.insert("amount".to_string(), 100.0);
+        let kept = jpeg_artifact_removal(&edge, &P { spec, values: &values });
+        let step = kept.get_pixel(48, 8)[0] as i32 - kept.get_pixel(47, 8)[0] as i32;
+        assert!(step > 200, "a real edge on a block border stays: {step}");
+    }
 }

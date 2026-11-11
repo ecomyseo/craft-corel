@@ -292,6 +292,8 @@ enum Mark {
 /// A separator: a light line from the gutter to the right edge.
 pub(crate) fn sep(ui: &mut Ui) {
     if invoke::active() {
+        #[cfg(test)]
+        invoke::separator();
         return;
     }
     let width = ui.min_rect().width().max(MENU_WIDTH);
@@ -766,6 +768,9 @@ fn mark_item_if(ui: &mut Ui, key: &str, shortcut: &str, mark: Mark, enabled: boo
 /// commands that take shortcuts.
 fn todo_sub(ui: &mut Ui, key: &str) {
     if invoke::active() {
+        // Greyed and empty: only its place counts (the menus' outline).
+        invoke::enter(key);
+        invoke::leave();
         return;
     }
     let (r, _) = menu_row(ui, &tr(key), "", false, Mark::Submenu);
@@ -1068,10 +1073,32 @@ pub(crate) mod invoke {
         })
     }
 
+    #[cfg(test)]
+    thread_local! {
+        /// Separators (`None`) and submenus entered (their key) while
+        /// collecting, in walk order: where they fall among the entries
+        /// and in which menus (the menus' outline, for tests; some
+        /// submenus list ready labels rather than commands).
+        pub static MARKS: RefCell<Vec<(usize, Vec<String>, Option<String>)>> = const { RefCell::new(Vec::new()) };
+    }
+
+    #[cfg(test)]
+    pub fn separator() {
+        MODE.with(|m| {
+            if let Some(Mode::Collect { path, out }) = m.borrow().as_ref() {
+                MARKS.with(|s| s.borrow_mut().push((out.len(), path.clone(), None)));
+            }
+        });
+    }
+
     pub fn enter(key: &str) {
         MODE.with(|m| {
-            if let Some(Mode::Collect { path, .. }) = m.borrow_mut().as_mut() {
+            if let Some(Mode::Collect { path, out }) = m.borrow_mut().as_mut() {
                 path.push(key.to_string());
+                #[cfg(test)]
+                MARKS.with(|s| s.borrow_mut().push((out.len(), path.clone(), Some(key.to_string()))));
+                #[cfg(not(test))]
+                let _ = out;
             }
         });
     }
@@ -1416,14 +1443,10 @@ mod tests {
             "Ctrl+M"
         );
         let trace = find("menu.bitmaps.quick_trace").expect("Automatic trace");
-        assert_eq!(trace.path, ["menu.bitmaps", "menu.bitmaps.trace"]);
+        assert_eq!(trace.path, ["menu.bitmaps"]);
         assert_eq!(
             find("menu.bitmaps.trace_logo").expect("Logo preset").path,
-            [
-                "menu.bitmaps",
-                "menu.bitmaps.trace",
-                "menu.bitmaps.outline_trace"
-            ]
+            ["menu.bitmaps", "menu.bitmaps.outline_trace"]
         );
         assert_eq!(
             find("menu.layout.insert_page").expect("Insert Page").path,
@@ -2205,7 +2228,7 @@ mod tests {
                 (app.view, app.snap, app.window_layout, app.multipage, app.page_sorter),
                 (app.mask_outside_page, app.fullscreen_preview, app.rollover_live, app.tool),
                 (&app.selection, app.docs.len(), app.active_doc, app.page, &app.status),
-                (app.symmetry_edit, app.clipboard.is_some(), app.show_menu_bar),
+                (app.symmetry_edit, app.clipboard.is_some(), app.show_menu_bar, app.acquire_source),
             )
         ));
         // Pages and files handed to the system (help pages, the browser).
@@ -2691,7 +2714,13 @@ fn file_menu(app: &mut App, ui: &mut Ui) {
     sub(ui, "menu.file.acquire_image", |ui| {
         use crate::acquire::Source;
         // TWAIN: offered once acquiring through it is done.
-        if check_if(ui, "menu.file.acquire_twain", "", app.acquire_source == Source::Twain, false) {
+        if check_if(
+            ui,
+            "menu.file.acquire_twain",
+            "",
+            app.acquire_source == Source::Twain,
+            crate::acquire::twain_available(),
+        ) {
             app.set_acquire_source(Source::Twain);
         }
         if check_if(
@@ -2715,11 +2744,11 @@ fn file_menu(app: &mut App, ui: &mut Ui) {
         app.export();
     }
     sub(ui, "menu.file.export_for", |ui| {
-        if item(ui, "menu.file.export_for_web", "", doc) {
-            app.dialog = Dialog::Export(crate::ui::dialogs::ExportState::web());
-        }
         if item(ui, "menu.file.export_for_office", "", doc) {
             app.dialog = Dialog::Export(crate::ui::dialogs::ExportState::office());
+        }
+        if item(ui, "menu.file.export_for_web", "", doc) {
+            app.dialog = Dialog::Export(crate::ui::dialogs::ExportState::web());
         }
     });
     sub(ui, "menu.file.send_to", |ui| {
@@ -2822,6 +2851,17 @@ fn edit_menu(app: &mut App, ui: &mut Ui) {
         app.repeat_last();
     }
     sep(ui);
+    // Focus mode, as the reference's Edit menu has it: one object (a
+    // group most of all) edited on its own, and the way back out.
+    let one = app.selection.as_slice();
+    let focusable = one.len() == 1 && app.focus_target() != Some(one[0]);
+    if item(ui, "menu.edit.bring_into_focus", "", focusable) {
+        app.bring_into_focus();
+    }
+    if item(ui, "menu.edit.exit_focus_mode", "", app.focus_target().is_some()) {
+        app.exit_focus();
+    }
+    sep(ui);
     // Guidelines selected (no objects) are cut and copied too.
     let guides_picked = !app.selected_guides.is_empty();
     // While a text is being edited they act on its selected characters
@@ -2840,7 +2880,6 @@ fn edit_menu(app: &mut App, ui: &mut Ui) {
     if item(ui, "menu.edit.copy_properties_from", "Ctrl+Shift+A", has) {
         app.open_copy_properties();
     }
-    sep(ui);
     if item(ui, "menu.edit.paste", "Ctrl+V", true) {
         app.paste_any();
     }
@@ -2855,7 +2894,6 @@ fn edit_menu(app: &mut App, ui: &mut Ui) {
     if item(ui, "menu.edit.paste_special", "", true) {
         app.dialog = Dialog::PasteSpecial(Default::default());
     }
-    sep(ui);
     if app.editing_text() {
         // The selected characters, as the Delete key does.
         if item(
@@ -2942,14 +2980,6 @@ fn view_menu(app: &mut App, ui: &mut Ui) {
     }
     if check(ui, "menu.view.multipage", "", app.multipage) {
         app.set_multipage(!app.multipage);
-    }
-    if check(
-        ui,
-        "menu.view.draw_in_perspective",
-        "",
-        app.perspective.is_some(),
-    ) {
-        app.toggle_perspective_drawing();
     }
     sep(ui);
     if item(ui, "menu.view.zoom_in", "Ctrl++", true) {
@@ -3112,6 +3142,9 @@ pub(crate) fn layout_menu(app: &mut App, ui: &mut Ui) {
                 crate::ops2::PageNumberWhere::Even,
             ),
         ] {
+            if key == "menu.layout.page_number_all" {
+                sep(ui);
+            }
             if item(ui, key, "", true) {
                 app.insert_page_number(where_);
             }
@@ -3209,6 +3242,39 @@ pub(crate) fn layout_menu(app: &mut App, ui: &mut Ui) {
 fn object_menu(app: &mut App, ui: &mut Ui) {
     let has = !app.selection.is_empty();
     let many = app.selection.len() > 1;
+    sub(ui, "menu.object.create", |ui| {
+        if item(
+            ui,
+            "menu.object.create_arrowhead",
+            "",
+            app.selection.len() == 1,
+        ) {
+            app.create_arrowhead_from_selection();
+        }
+        // Pattern Fill asks whether the pattern is vector or bitmap.
+        if item(
+            ui,
+            "menu.object.create_pattern",
+            "",
+            !app.selection.is_empty(),
+        ) {
+            app.dialog = Dialog::CreatePattern { vector: true };
+        }
+    });
+    sub(ui, "menu.object.insert", |ui| {
+        if item(ui, "menu.object.insert_qr", "", true) {
+            app.insert_qr_code();
+            // Its settings are edited in Properties.
+            app.show_dockers = true;
+            app.docker_tab = DockerTab::Properties;
+        }
+        if item(ui, "menu.object.insert_barcode", "", true) {
+            app.dialog = Dialog::Barcode(Default::default());
+        }
+        if item(ui, "menu.object.insert_page_number", "", true) {
+            app.insert_page_number(crate::ops2::PageNumberWhere::Active);
+        }
+    });
     // AI Generate: the docker in each mode, and Remove Background.
     sub(ui, "menu.object.ai_generate", |ui| {
         let doc = app.has_document();
@@ -3240,39 +3306,6 @@ fn object_menu(app: &mut App, ui: &mut Ui) {
             app.ai_remove_background();
         }
     });
-    sub(ui, "menu.object.create", |ui| {
-        if item(
-            ui,
-            "menu.object.create_arrowhead",
-            "",
-            app.selection.len() == 1,
-        ) {
-            app.create_arrowhead_from_selection();
-        }
-        // Pattern Fill asks whether the pattern is vector or bitmap.
-        if item(
-            ui,
-            "menu.object.create_pattern",
-            "",
-            !app.selection.is_empty(),
-        ) {
-            app.dialog = Dialog::CreatePattern { vector: true };
-        }
-    });
-    sub(ui, "menu.object.insert", |ui| {
-        if item(ui, "menu.object.insert_barcode", "", true) {
-            app.dialog = Dialog::Barcode(Default::default());
-        }
-        if item(ui, "menu.object.insert_qr", "", true) {
-            app.insert_qr_code();
-            // Its settings are edited in Properties.
-            app.show_dockers = true;
-            app.docker_tab = DockerTab::Properties;
-        }
-        if item(ui, "menu.object.insert_page_number", "", true) {
-            app.insert_page_number(crate::ops2::PageNumberWhere::Active);
-        }
-    });
     sep(ui);
     sub(ui, "menu.object.clip_frame", |ui| {
         let is_clip = app
@@ -3294,16 +3327,22 @@ fn object_menu(app: &mut App, ui: &mut Ui) {
                 app.run(Command::ExtractContents { clip: c });
             }
         }
+        sep(ui);
         // Walked for the list of commands (Options > Customization >
         // Commands) both rows count, so each can take a shortcut (#1148).
         let editing = app.clip_frame_edit.is_some();
-        if (editing || invoke::active()) && item(ui, "menu.object.clip_frame_finish", "", editing) {
-            app.finish_clip_frame_edit();
-        }
         if (!editing || invoke::active())
             && item(ui, "menu.object.clip_frame_edit", "", is_clip && !editing)
         {
             app.edit_clip_frame();
+        }
+        if (editing || invoke::active()) && item(ui, "menu.object.clip_frame_finish", "", editing) {
+            app.finish_clip_frame_edit();
+        }
+        sep(ui);
+        let framable = !app.framable().is_empty();
+        if item(ui, "menu.object.clip_frame_create_empty", "", framable) {
+            app.objects_to_clip_frames();
         }
         let locked = app
             .selected_shapes()
@@ -3313,6 +3352,28 @@ fn object_menu(app: &mut App, ui: &mut Ui) {
         if check_if(ui, "menu.object.clip_frame_lock", "", is_clip && locked, is_clip) {
             app.toggle_clip_frame_lock();
         }
+        sep(ui);
+        // Fit the contents of the selected frames to them.
+        let clips: Vec<_> = app
+            .selected_shapes()
+            .iter()
+            .filter(|s| matches!(s.kind, ShapeKind::ClipFrame { .. }))
+            .map(|s| s.id)
+            .collect();
+        use crate::ui::clip_bar::FitContents;
+        for (key, mode) in [
+            ("menu.object.clip_fit_center", FitContents::Center),
+            ("menu.object.clip_fit_proportional", FitContents::FitProportionally),
+            ("menu.object.clip_fill_proportional", FitContents::FillProportionally),
+            ("menu.object.clip_stretch", FitContents::Stretch),
+        ] {
+            if item(ui, key, "", !clips.is_empty()) {
+                for c in &clips {
+                    app.fit_clip_contents(*c, mode);
+                }
+            }
+        }
+        sep(ui);
         let masks: Vec<_> = app
             .selected_shapes()
             .iter()
@@ -3432,19 +3493,32 @@ fn object_menu(app: &mut App, ui: &mut Ui) {
     sep(ui);
     sub(ui, "menu.object.copy_effect", |ui| {
         use crate::copy_effect::CopyKind;
-        for kind in [CopyKind::Shadow, CopyKind::Transparency] {
-            if item(ui, kind.key(), "", has) {
-                app.pending_copy_effect = Some(kind);
-                app.status = tr("status.click_source_object");
-            }
-        }
-        if item(ui, "menu.object.copy_envelope_from", "", has) {
-            app.start_copy_envelope();
-        }
-        for kind in CopyKind::LIVE {
-            if item(ui, kind.key(), "", has) {
-                app.pending_copy_effect = Some(kind);
-                app.status = tr("status.click_source_object");
+        // The reference's order; Envelope is copied its own way.
+        for kind in [
+            Some(CopyKind::Perspective),
+            None,
+            Some(CopyKind::Blend),
+            Some(CopyKind::Extrude),
+            Some(CopyKind::Contour),
+            Some(CopyKind::Lens),
+            Some(CopyKind::Shadow),
+            Some(CopyKind::Distortion),
+            Some(CopyKind::Transparency),
+            Some(CopyKind::Bevel),
+            Some(CopyKind::BlockShadow),
+        ] {
+            match kind {
+                None => {
+                    if item(ui, "menu.object.copy_envelope_from", "", has) {
+                        app.start_copy_envelope();
+                    }
+                }
+                Some(kind) => {
+                    if item(ui, kind.key(), "", has) {
+                        app.pending_copy_effect = Some(kind);
+                        app.status = tr("status.click_source_object");
+                    }
+                }
             }
         }
     });
@@ -3474,9 +3548,24 @@ fn object_menu(app: &mut App, ui: &mut Ui) {
             ("menu.object.align_centers_v", "C", Align::CenterV),
             ("menu.object.center_to_page", "P", Align::CenterPage),
         ] {
+            if a == Align::CenterPage {
+                sep(ui);
+            }
             if item(ui, key, shortcut, has) {
                 app.align(a);
             }
+        }
+        for (key, a) in [
+            ("menu.object.center_page_h", Align::CenterV),
+            ("menu.object.center_page_v", Align::CenterH),
+        ] {
+            if item(ui, key, "", has) {
+                app.align_with(a, crate::ops2::AlignTo::PageCenter);
+            }
+        }
+        sep(ui);
+        if item(ui, "menu.object.align_pixel_grid", "", has) {
+            app.align_to_pixel_grid();
         }
         sep(ui);
         let three = app.selection.len() >= 3;
@@ -3510,6 +3599,7 @@ fn object_menu(app: &mut App, ui: &mut Ui) {
         if item(ui, "menu.object.to_back_of_page", "Ctrl+End", has) {
             app.order_page(false);
         }
+        sep(ui);
         if item(ui, "menu.object.to_front_of_layer", "Shift+PgUp", has) {
             app.order(0);
         }
@@ -3522,6 +3612,7 @@ fn object_menu(app: &mut App, ui: &mut Ui) {
         if item(ui, "menu.object.back_one", "Ctrl+PgDn", has) {
             app.order(2);
         }
+        sep(ui);
         if item(ui, "menu.object.in_front_of", "", has) {
             app.pending_order = Some(true);
             app.status = tr("status.click_reference_object");
@@ -3530,6 +3621,7 @@ fn object_menu(app: &mut App, ui: &mut Ui) {
             app.pending_order = Some(false);
             app.status = tr("status.click_reference_object");
         }
+        sep(ui);
         if item(ui, "menu.object.reverse_order", "", many) {
             app.reverse_order();
         }
@@ -3554,7 +3646,16 @@ fn object_menu(app: &mut App, ui: &mut Ui) {
         if item(ui, "menu.object.hide_object", "", has) {
             app.set_visible(false);
         }
-        if item(ui, "menu.object.show_all", "", true) {
+        let hidden = app.selected_shapes().iter().any(|s| !s.visible);
+        if item(ui, "menu.object.show_selected", "", hidden) {
+            app.set_visible(true);
+        }
+        // Greyed with nothing hidden on the page.
+        let any_hidden = app
+            .doc()
+            .page(app.page)
+            .is_ok_and(|p| p.layers.iter().flat_map(|l| &l.shapes).any(|s| !s.visible));
+        if item(ui, "menu.object.show_all", "", any_hidden) {
             app.show_all();
         }
     });
@@ -3612,9 +3713,20 @@ fn object_menu(app: &mut App, ui: &mut Ui) {
     if item(ui, label, "Ctrl+K", has) {
         app.break_apart();
     }
-    if item(ui, "menu.object.add_perspective", "", has) {
-        app.add_perspective();
-    }
+    sub(ui, "menu.object.perspective", |ui| {
+        if item(ui, "menu.object.add_perspective", "", has) {
+            app.add_perspective();
+        }
+        sep(ui);
+        if check(
+            ui,
+            "menu.view.draw_in_perspective",
+            "",
+            app.perspective.is_some(),
+        ) {
+            app.toggle_perspective_drawing();
+        }
+    });
     sep(ui);
     if item(
         ui,
@@ -3712,6 +3824,9 @@ fn effects_menu(app: &mut App, ui: &mut Ui) {
     for (key, group) in crate::fx::groups() {
         sub(ui, key, |ui| {
             for fx in group.iter() {
+                if crate::fx::separated_before(fx.id) {
+                    sep(ui);
+                }
                 let shortcut = match fx.id {
                     "brightness_contrast_intensity" => "Ctrl+B",
                     "color_balance" => "Ctrl+Shift+B",
@@ -3783,9 +3898,19 @@ fn bitmaps_menu(app: &mut App, ui: &mut Ui) {
     if item(ui, "menu.bitmaps.convert_to_bitmap", "", has) {
         app.dialog = Dialog::ConvertToBitmap(Default::default());
     }
+    sep(ui);
     if item(ui, "menu.bitmaps.straighten_image", "", has_bitmap) {
         app.dialog = Dialog::StraightenImage(Default::default());
     }
+    // The lab: temperature, tint, saturation, tones and the black and
+    // white points in one dialog (the Image Adjustments effect).
+    if item(ui, "menu.bitmaps.image_adjustment_lab", "", has_bitmap) {
+        crate::ui::effect_dialog::choose_effect(app, "image_adjustments");
+    }
+    if item(ui, "menu.bitmaps.remove_jpeg_artifacts", "", has_bitmap) {
+        crate::ui::effect_dialog::choose_effect(app, "jpeg_artifact_removal");
+    }
+    sep(ui);
     if item(
         ui,
         "menu.bitmaps.edit_bitmap",
@@ -3794,22 +3919,9 @@ fn bitmaps_menu(app: &mut App, ui: &mut Ui) {
     ) {
         app.edit_bitmap_externally();
     }
-    if item(ui, "menu.bitmaps.crop_bitmap", "", has_bitmap) {
-        app.set_tool(crate::tools::Tool::Crop);
-    }
-    let framed = !app.framed_pictures().is_empty();
-    if item(ui, "menu.bitmaps.crop_to_frame", "", framed) {
-        app.crop_pictures_to_frames();
-    }
-    if item(ui, "menu.bitmaps.resample", "", has_bitmap) {
-        app.open_resample();
-    }
-    // On this computer, no AI service needed.
-    if item(ui, "menu.bitmaps.remove_background_local", "", has_bitmap) {
-        crate::ui::bitmap_dialogs::open_remove_background(app);
-    }
     // AI: greyed until the AI service makes pictures (Tools > Options >
-    // AI > Service); the tip says why.
+    // AI > Service); the tip says why. Next to it, the one made on this
+    // computer, with no AI service.
     let cutout = app.ai_image_ready() && app.ai_source_bitmap().is_some() && !app.ai_image.busy();
     let tip = app.ai_image_tip();
     if item_tip(
@@ -3820,6 +3932,19 @@ fn bitmaps_menu(app: &mut App, ui: &mut Ui) {
         tip.as_deref(),
     ) {
         app.ai_remove_background();
+    }
+    if item(ui, "menu.bitmaps.remove_background_local", "", has_bitmap) {
+        crate::ui::bitmap_dialogs::open_remove_background(app);
+    }
+    if item(ui, "menu.bitmaps.crop_bitmap", "", has_bitmap) {
+        app.set_tool(crate::tools::Tool::Crop);
+    }
+    let framed = !app.framed_pictures().is_empty();
+    if item(ui, "menu.bitmaps.crop_to_frame", "", framed) {
+        app.crop_pictures_to_frames();
+    }
+    if item(ui, "menu.bitmaps.resample", "", has_bitmap) {
+        app.open_resample();
     }
     let styled = app.ai_image_ready() && !app.selection.is_empty() && !app.ai_image.busy();
     sub(ui, "menu.bitmaps.ai_art_styles", |ui| {
@@ -3896,39 +4021,37 @@ fn bitmaps_menu(app: &mut App, ui: &mut Ui) {
         app.update_bitmap_from_link();
     }
     sep(ui);
-    // Image > Trace: the automatic trace, the last trace again or its
-    // settings, and the Centerline and Outline presets.
-    sub_if(ui, "menu.bitmaps.trace", has_bitmap, |ui| {
-        if item(ui, "menu.bitmaps.quick_trace", "", has_bitmap) {
-            app.quick_trace();
-        }
-        let last = app.last_trace.is_some();
-        if item(ui, "menu.bitmaps.repeat_last_trace", "", has_bitmap && last) {
-            app.repeat_last_trace();
-        }
-        if item(
-            ui,
-            "menu.bitmaps.last_trace_settings",
-            "",
-            has_bitmap && last,
-        ) {
-            app.open_last_trace_settings();
-        }
-        sep(ui);
-        sub_if(ui, "menu.bitmaps.centerline_trace", has_bitmap, |ui| {
-            for (key, preset) in CENTERLINE_TRACES {
-                if item(ui, key, "", has_bitmap) {
-                    app.open_trace(preset);
-                }
+    // The trace commands in the menu itself, as the reference has them:
+    // the automatic trace, the last trace again or its settings, and the
+    // Centerline and Outline presets.
+    if item(ui, "menu.bitmaps.quick_trace", "", has_bitmap) {
+        app.quick_trace();
+    }
+    let last = app.last_trace.is_some();
+    if item(ui, "menu.bitmaps.repeat_last_trace", "", has_bitmap && last) {
+        app.repeat_last_trace();
+    }
+    if item(
+        ui,
+        "menu.bitmaps.last_trace_settings",
+        "",
+        has_bitmap && last,
+    ) {
+        app.open_last_trace_settings();
+    }
+    sub_if(ui, "menu.bitmaps.centerline_trace", has_bitmap, |ui| {
+        for (key, preset) in CENTERLINE_TRACES {
+            if item(ui, key, "", has_bitmap) {
+                app.open_trace(preset);
             }
-        });
-        sub_if(ui, "menu.bitmaps.outline_trace", has_bitmap, |ui| {
-            for (key, preset) in OUTLINE_TRACES {
-                if item(ui, key, "", has_bitmap) {
-                    app.open_trace(preset);
-                }
+        }
+    });
+    sub_if(ui, "menu.bitmaps.outline_trace", has_bitmap, |ui| {
+        for (key, preset) in OUTLINE_TRACES {
+            if item(ui, key, "", has_bitmap) {
+                app.open_trace(preset);
             }
-        });
+        }
     });
     sep(ui);
     todo_sub(ui, "menu.bitmaps.plugins");
@@ -3982,23 +4105,30 @@ fn text_menu(app: &mut App, ui: &mut Ui) {
     if item(ui, "menu.text.edit_text", "Ctrl+Shift+T", is_text) {
         app.open_edit_text_dialog();
     }
-    if item(ui, "menu.text.insert_placeholder_text", "", is_para) {
-        app.insert_placeholder_text();
-    }
     sub(ui, "menu.text.insert_formatting_code", |ui| {
         for (key, code) in [
             ("menu.text.code_em_space", "\u{2003}"),
             ("menu.text.code_en_space", "\u{2002}"),
+            ("menu.text.code_quarter_space", "\u{2005}"),
             ("menu.text.code_nonbreaking_space", "\u{00A0}"),
-            ("menu.text.code_em_dash", "\u{2014}"),
-            ("menu.text.code_en_dash", "\u{2013}"),
-            ("menu.text.code_optional_hyphen", "\u{00AD}"),
+            ("menu.text.code_tab", "\t"),
             ("menu.text.code_column_break", "\u{000C}"),
             ("menu.text.code_line_break", "\u{2028}"),
+            ("", ""),
+            ("menu.text.code_em_dash", "\u{2014}"),
+            ("menu.text.code_en_dash", "\u{2013}"),
+            ("menu.text.code_nonbreaking_hyphen", "\u{2011}"),
+            ("menu.text.code_optional_hyphen", "\u{00AD}"),
         ] {
-            if item(ui, key, "", app.text_edit.is_some()) {
+            if key.is_empty() {
+                sep(ui);
+            } else if item(ui, key, "", app.text_edit.is_some()) {
                 app.insert_text(code);
             }
+        }
+        sep(ui);
+        if item(ui, "menu.text.custom_hyphens", "", true) {
+            app.dialog = Dialog::CustomHyphens(Default::default());
         }
     });
     sep(ui);
@@ -4017,6 +4147,14 @@ fn text_menu(app: &mut App, ui: &mut Ui) {
         if item(ui, "menu.text.frame_fit_text", "", is_para) {
             app.fit_text_to_frame();
         }
+        if item(ui, "menu.text.insert_placeholder_text", "", is_para) {
+            app.insert_placeholder_text();
+        }
+        sep(ui);
+        if item(ui, "menu.text.frame_create_in_selected", "", app.selection.len() == 1) {
+            app.object_to_text_frame();
+        }
+        sep(ui);
         if item(ui, "menu.text.frame_link", "", app.selection.len() == 2) {
             app.link_text_frames();
         }
@@ -4074,9 +4212,6 @@ fn text_menu(app: &mut App, ui: &mut Ui) {
     sep(ui);
     if check(ui, "menu.text.use_hyphenation", "", app.uses_hyphenation()) {
         app.toggle_use_hyphenation();
-    }
-    if item(ui, "menu.text.custom_hyphens", "", true) {
-        app.dialog = Dialog::CustomHyphens(Default::default());
     }
     sub(ui, "menu.text.writing_tools", |ui| {
         if item(ui, "menu.text.spell_check", "", true) {
@@ -4458,11 +4593,11 @@ fn window_menu(app: &mut App, ui: &mut Ui) {
         }
         sep(ui);
         // Every part, whatever the options chose.
-        if item(ui, "menu.window.workspace_export", "", true) {
-            app.export_workspace_dialog(crate::workspace_file::WorkspaceParts::ALL);
-        }
         if item(ui, "menu.window.workspace_import", "", true) {
             app.import_workspace_dialog(crate::workspace_file::WorkspaceParts::ALL, true);
+        }
+        if item(ui, "menu.window.workspace_export", "", true) {
+            app.export_workspace_dialog(crate::workspace_file::WorkspaceParts::ALL);
         }
     });
     sep(ui);
@@ -4541,6 +4676,44 @@ pub(crate) fn color_palettes_body(app: &mut App, ui: &mut Ui) {
             )
         })
         .collect();
+    // New palettes and opening one, then the editors, then the palettes
+    // shown, as the reference's menu configuration has them.
+    if item(
+        ui,
+        "menu.window.palette_from_selection",
+        "",
+        !app.selection.is_empty(),
+    ) {
+        app.palette_from_selection();
+    }
+    if item(ui, "menu.window.palette_add_from_document", "", app.has_document()) {
+        app.add_document_colors_to_palette();
+    }
+    sep(ui);
+    if item(ui, "menu.window.palette_from_document", "", true) {
+        app.palette_from_document();
+    }
+    if item(ui, "palette.new", "", true) {
+        crate::ui::palette_bars::start_new_palette(app);
+    }
+    if item(ui, "menu.window.palette_open", "", true) {
+        app.open_palette_file();
+    }
+    let open = app.settings.palette.show_palette
+        || app.settings.palette.show_document
+        || !app.settings.palette_bars.is_empty();
+    if item(ui, "menu.window.palette_close_all", "", open) {
+        app.close_all_palettes();
+    }
+    sep(ui);
+    if item(ui, "menu.window.palette_editor", "", true) {
+        app.dialog = Dialog::PaletteEditor(Default::default());
+    }
+    if item(ui, "menu.window.palette_manager", "", true) {
+        app.show_dockers = true;
+        app.docker_tab = DockerTab::Palettes;
+    }
+    sep(ui);
     if check(
         ui,
         "palette.show_document",
@@ -4562,31 +4735,6 @@ pub(crate) fn color_palettes_body(app: &mut App, ui: &mut Ui) {
             Some(k) => crate::ui::palette_bars::close_bar(app, k),
             None => app.open_palette_bar(crate::settings::DOCUMENT_PALETTE),
         }
-    }
-    sep(ui);
-    if item(ui, "palette.new", "", true) {
-        crate::ui::palette_bars::start_new_palette(app);
-    }
-    if item(ui, "menu.window.palette_open", "", true) {
-        app.open_palette_file();
-    }
-    if item(ui, "menu.window.palette_editor", "", true) {
-        app.dialog = Dialog::PaletteEditor(Default::default());
-    }
-    if item(ui, "menu.window.palette_manager", "", true) {
-        app.show_dockers = true;
-        app.docker_tab = DockerTab::Palettes;
-    }
-    if item(ui, "menu.window.palette_from_document", "", true) {
-        app.palette_from_document();
-    }
-    if item(
-        ui,
-        "menu.window.palette_from_selection",
-        "",
-        !app.selection.is_empty(),
-    ) {
-        app.palette_from_selection();
     }
 }
 
@@ -4681,5 +4829,200 @@ pub(crate) fn options_items(app: &mut App, ui: &mut Ui) {
     if item(ui, "menu.tools.options_ai", "", true) {
         app.dialog = Dialog::Options;
         app.options_page = crate::ui::dialogs::OptionsPage::AiGeneral;
+    }
+}
+
+#[cfg(test)]
+mod outline_tests {
+    use super::*;
+
+    /// The rows taken in from the reference's submenus do what they say:
+    /// PowerClip's empty frame and fitting, centring on the page each way,
+    /// Show Objects, a text frame of the selected object, the document's
+    /// colours and Close All Palettes.
+    #[test]
+    fn the_rows_taken_from_the_reference_work() {
+        use tracedraw_core::{Command, Rect};
+        crate::i18n::set_language("en");
+        let ctx = crate::theme::ui_context();
+        let mut out = ctx.run_ui(egui::RawInput::default(), |_| {});
+        out.textures_delta.clear();
+        let mut app = App::headless();
+        let rect = |app: &mut App, r: Rect| {
+            app.new_shape(ShapeKind::Rect { rect: r, radius: 0.0, corners: None }).expect("rect")
+        };
+        let bounds = |app: &App, id| app.doc().find_shape(id).expect("shape").bounds();
+        // PowerClip: contents centred in their frame.
+        let inside = rect(&mut app, Rect::new(0.0, 0.0, 10.0, 10.0));
+        let frame = rect(&mut app, Rect::new(100.0, 100.0, 200.0, 160.0));
+        app.run(Command::PlaceInside { contents: vec![inside], frame });
+        app.select(vec![frame]);
+        assert!(run_command(&mut app, &ctx, "menu.object.clip_fit_center"));
+        let b = bounds(&app, inside);
+        assert!((b.center().x - 150.0).abs() < 1e-6 && (b.center().y - 130.0).abs() < 1e-6, "{b:?}");
+        assert!(run_command(&mut app, &ctx, "menu.object.clip_stretch"));
+        let b = bounds(&app, inside);
+        assert!((b.width() - 100.0).abs() < 1e-6 && (b.height() - 60.0).abs() < 1e-6, "{b:?}");
+        // An object becomes an empty clip frame.
+        let plain = rect(&mut app, Rect::new(300.0, 0.0, 340.0, 40.0));
+        app.select(vec![plain]);
+        assert!(run_command(&mut app, &ctx, "menu.object.clip_frame_create_empty"));
+        assert!(matches!(&app.doc().find_shape(plain).expect("frame").kind, ShapeKind::ClipFrame { contents, .. } if contents.is_empty()));
+        // Centre to the page horizontally: x only.
+        let s = rect(&mut app, Rect::new(5.0, 7.0, 25.0, 17.0));
+        app.select(vec![s]);
+        let page = app.page_rect();
+        assert!(run_command(&mut app, &ctx, "menu.object.center_page_h"));
+        let b = bounds(&app, s);
+        assert!((b.center().x - page.center().x).abs() < 1e-6 && (b.y0 - 7.0).abs() < 1e-6, "{b:?}");
+        assert!(run_command(&mut app, &ctx, "menu.object.center_page_v"));
+        let b = bounds(&app, s);
+        assert!((b.center().y - page.center().y).abs() < 1e-6, "{b:?}");
+        assert!(run_command(&mut app, &ctx, "menu.object.align_pixel_grid"));
+        // Show Objects: a hidden object selected comes back.
+        app.select(vec![s]);
+        app.set_visible(false);
+        app.select(vec![s]);
+        assert!(!app.doc().find_shape(s).expect("s").visible);
+        assert!(run_command(&mut app, &ctx, "menu.object.show_selected"));
+        assert!(app.doc().find_shape(s).expect("s").visible);
+        // A paragraph text frame of the selected object.
+        app.select(vec![s]);
+        assert!(run_command(&mut app, &ctx, "menu.text.frame_create_in_selected"));
+        // Close All Palettes puts every palette away.
+        assert!(run_command(&mut app, &ctx, "menu.window.palette_close_all"));
+        assert!(!app.settings.palette.show_palette && !app.settings.palette.show_document);
+        assert!(app.settings.palette_bars.is_empty());
+        app.settings.palette.show_palette = true;
+        assert!(run_command(&mut app, &ctx, "menu.window.palette_add_from_document"));
+    }
+
+    /// The top level of every menu in order: items, submenus (`>`) and
+    /// separators (`|`), printed one line per menu for the row-by-row
+    /// contrast with the reference's menu configuration
+    /// (`utiles/claude-goal/contraste_menus.py`). Leading, trailing and
+    /// doubled separators would be drawing errors and are refused.
+    #[test]
+    fn menu_outline() {
+        crate::i18n::set_language("en");
+        let mut app = App::headless();
+        let ctx = crate::theme::ui_context();
+        invoke::MARKS.with(|s| s.borrow_mut().clear());
+        let mut entries = Vec::new();
+        let mut out = ctx.run_ui(egui::RawInput::default(), |ui| entries = commands(&mut app, ui.ctx()));
+        out.textures_delta.clear();
+        let marks = invoke::MARKS.with(|s| s.take());
+        let mut menus: Vec<(String, Vec<String>)> = Vec::new();
+        let mut push = |top: &str, token: String| match menus.iter_mut().find(|(t, _)| t == top) {
+            Some((_, v)) => v.push(token),
+            None => menus.push((top.to_string(), vec![token])),
+        };
+        let mut opened: Vec<(String, String)> = Vec::new();
+        let mut open = |top: &str, sub: &str, push: &mut dyn FnMut(&str, String)| {
+            let k = (top.to_string(), sub.to_string());
+            if !opened.contains(&k) {
+                opened.push(k);
+                push(top, format!(">{sub}"));
+            }
+        };
+        for i in 0..=entries.len() {
+            for (_, path, what) in marks.iter().filter(|(at, _, _)| *at == i) {
+                match (what, path.as_slice()) {
+                    (None, [top]) => push(top, "|".into()),
+                    (Some(_), [top, sub]) => open(top, sub, &mut push),
+                    _ => {}
+                }
+            }
+            let Some(e) = entries.get(i) else { break };
+            match e.path.as_slice() {
+                [top] => push(top, e.key.clone()),
+                [top, sub, ..] => open(top, sub, &mut push),
+                [] => {}
+            }
+        }
+        // Every submenu too, one line each ("OUTLINE2 menu > submenu: ...").
+        let mut subs: Vec<(Vec<String>, Vec<String>)> = Vec::new();
+        let mut put = |at: &[String], token: String| match subs.iter_mut().find(|(p, _)| p == at) {
+            Some((_, v)) => {
+                if !(token.starts_with('>') && v.contains(&token)) {
+                    v.push(token)
+                }
+            }
+            None => subs.push((at.to_vec(), vec![token])),
+        };
+        for i in 0..=entries.len() {
+            for (_, path, what) in marks.iter().filter(|(at, _, _)| *at == i) {
+                match what {
+                    None if path.len() >= 2 => put(path, "|".into()),
+                    Some(s) if path.len() >= 3 => put(&path[..path.len() - 1], format!(">{s}")),
+                    _ => {}
+                }
+            }
+            let Some(e) = entries.get(i) else { break };
+            if e.path.len() >= 2 {
+                put(&e.path, e.key.clone());
+            }
+        }
+        // The bitmap effect groups list ready labels: their effects (the
+        // walk saw only their separators).
+        let groups = crate::fx::groups();
+        subs.retain(|(p, _)| !(p.len() == 2 && p[0] == "menu.effects" && groups.iter().any(|(k, _)| p[1] == *k)));
+        let mut put = |at: &[String], token: String| match subs.iter_mut().find(|(p, _)| p == at) {
+            Some((_, v)) => v.push(token),
+            None => subs.push((at.to_vec(), vec![token])),
+        };
+        for (key, group) in groups {
+            let at = ["menu.effects".to_string(), key.to_string()];
+            for fx in group.iter() {
+                if crate::fx::separated_before(fx.id) {
+                    put(&at, "|".into());
+                }
+                put(&at, format!("fx.{}", fx.id));
+            }
+        }
+        for (path, tokens) in &subs {
+            println!("OUTLINE2 {}: {}", path.join(" > "), tokens.join(" "));
+        }
+        // Submenus the reference's menu configuration settles.
+        let sub = |path: &str| {
+            subs.iter()
+                .find(|(p, _)| p.join(" > ") == path)
+                .map(|(_, v)| v.join(" "))
+                .unwrap_or_else(|| panic!("no submenu {path}"))
+        };
+        for (path, want) in [
+            ("menu.file > menu.file.export_for", "menu.file.export_for_office menu.file.export_for_web"),
+            ("menu.object > menu.object.order", "menu.object.to_front_of_page menu.object.to_back_of_page | menu.object.to_front_of_layer menu.object.to_back_of_layer menu.object.forward_one menu.object.back_one | menu.object.in_front_of menu.object.behind | menu.object.reverse_order"),
+            ("menu.object > menu.object.clip_frame", "menu.object.clip_frame_place_inside menu.object.clip_frame_extract | menu.object.clip_frame_edit menu.object.clip_frame_finish |"),
+            ("menu.object > menu.object.perspective", "menu.object.add_perspective | menu.view.draw_in_perspective"),
+            ("menu.object > menu.object.copy_effect", "menu.object.copy_perspective_from menu.object.copy_envelope_from menu.object.copy_blend_from menu.object.copy_extrude_from menu.object.copy_contour_from menu.object.copy_lens_from menu.object.copy_shadow_from menu.object.copy_distortion_from"),
+            ("menu.effects > menu.effects.adjust", "fx.auto_adjust | fx.image_adjustments | fx.contrast_enhancement fx.target_balance fx.tone_curve | fx.shadows_midtones_highlights fx.brightness_contrast_intensity fx.color_balance fx.gamma | fx.tint_temperature fx.hue_saturation_lightness fx.grayscale fx.vibrance"),
+            ("menu.text > menu.text.paragraph_text_frame", "menu.text.frame_fit_text menu.text.insert_placeholder_text | menu.text.frame_create_in_selected | menu.text.frame_link menu.text.frame_unlink"),
+        ] {
+            let got = sub(path);
+            assert!(got.starts_with(want), "{path}: {got}");
+        }
+        assert!(sub("menu.effects > menu.effects.contour_group").ends_with("fx.local_equalization"));
+        assert_eq!(menus.len(), 12, "{:?}", menus.iter().map(|m| &m.0).collect::<Vec<_>>());
+        for (top, tokens) in &menus {
+            println!("OUTLINE {top}: {}", tokens.join(" "));
+            let mut v: Vec<&String> = tokens.iter().collect();
+            // A conditional item between two separators may be absent here.
+            v.dedup();
+            assert_ne!(v.first().map(|s| s.as_str()), Some("|"), "{top} starts with a separator");
+        }
+        // What the reference's menu configuration settles (DrawUI 27, see
+        // `utiles/claude-goal/mapa-menus-referencia.json`).
+        let menu = |k: &str| menus.iter().find(|(t, _)| t == k).map(|(_, v)| v.join(" ")).unwrap_or_default();
+        let edit = menu("menu.edit");
+        let cut_to_delete = &edit[edit.find("menu.edit.cut").expect("cut")..edit.find("menu.edit.delete").expect("delete")];
+        assert!(!cut_to_delete.contains('|'), "Edit: Cut to Delete is one group: {edit}");
+        assert!(edit.starts_with("menu.edit.undo menu.edit.redo menu.edit.repeat | menu.edit.bring_into_focus menu.edit.exit_focus_mode | menu.edit.cut"), "Edit: focus mode after Repeat: {edit}");
+        let object = menu("menu.object");
+        let at = |k: &str| object.find(k).unwrap_or_else(|| panic!("{k} in {object}"));
+        assert!(at(">menu.object.create") < at(">menu.object.insert") && at(">menu.object.insert") < at(">menu.object.ai_generate"), "Object: Create, Insert, AI Generate: {object}");
+        let bitmaps = menu("menu.bitmaps");
+        assert!(bitmaps.starts_with("menu.bitmaps.convert_to_bitmap | menu.bitmaps.straighten_image menu.bitmaps.image_adjustment_lab menu.bitmaps.remove_jpeg_artifacts |"), "Bitmaps: {bitmaps}");
+        assert!(bitmaps.contains("menu.bitmaps.quick_trace menu.bitmaps.repeat_last_trace menu.bitmaps.last_trace_settings >menu.bitmaps.centerline_trace >menu.bitmaps.outline_trace |"), "Bitmaps: the trace commands at the top level: {bitmaps}");
     }
 }

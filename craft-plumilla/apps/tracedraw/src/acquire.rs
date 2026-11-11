@@ -5,9 +5,14 @@
 //! WIA is reached through the Windows Image Acquisition device manager
 //! (`IWiaDevMgr2`): its own dialog picks the device, scans or takes the
 //! pictures and saves them to a folder of ours, whose files are then
-//! imported. Only the public interfaces of Windows are used.
+//! imported. TWAIN goes through the source manager Windows carries (see
+//! `twain`). Only the public interfaces of Windows and the public TWAIN
+//! specification are used.
 
 use crate::app::App;
+
+#[cfg(windows)]
+mod twain;
 
 /// Where pictures are acquired from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -45,11 +50,11 @@ pub fn wia_device_count() -> Option<usize> {
     imp::wia_device_count()
 }
 
-/// Whether a 64-bit TWAIN source manager with at least one data source is
-/// installed. Acquiring through TWAIN is not done yet, so the TWAIN source
-/// stays off even then.
-pub fn twain_sources_installed() -> bool {
-    imp::twain_sources_installed()
+/// Whether the 64-bit TWAIN source manager is installed: asked once.
+/// Whether it has sources is asked when acquiring, as WIA's devices are.
+pub fn twain_available() -> bool {
+    static TWAIN: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *TWAIN.get_or_init(imp::twain_available)
 }
 
 /// Run WIA's own dialog, over the window in front, and save what it
@@ -65,13 +70,13 @@ impl App {
         self.has_document()
             && match self.acquire_source {
                 Source::Wia => self.acquire_with.is_some() || wia_available(),
-                Source::Twain => false,
+                Source::Twain => self.acquire_with.is_some() || twain_available(),
             }
     }
 
     /// File > Acquire Image > WIA / TWAIN.
     pub fn set_acquire_source(&mut self, source: Source) {
-        if source == Source::Twain && !twain_sources_installed() {
+        if source == Source::Twain && !twain_available() {
             return;
         }
         self.acquire_source = source;
@@ -94,7 +99,10 @@ impl App {
         }
         let acquired = match &self.acquire_with {
             Some(f) => f(&folder),
-            None => acquire_wia(&folder),
+            None => match self.acquire_source {
+                Source::Wia => acquire_wia(&folder),
+                Source::Twain => imp::acquire_twain(&folder),
+            },
         };
         self.finish_acquire(acquired);
         let _ = std::fs::remove_dir_all(&folder);
@@ -268,22 +276,16 @@ mod imp {
         }
     }
 
-    pub fn twain_sources_installed() -> bool {
-        let Some(windows) = std::env::var_os("SystemRoot") else {
-            return false;
-        };
-        let windows = std::path::PathBuf::from(windows);
-        windows.join("System32").join("TWAINDSM.dll").is_file()
-            && std::fs::read_dir(windows.join("twain_64"))
-                .map(|d| {
-                    d.flatten().any(|e| {
-                        e.path().is_dir()
-                            || e.path()
-                                .extension()
-                                .is_some_and(|x| x.eq_ignore_ascii_case("ds"))
-                    })
-                })
-                .unwrap_or(false)
+    pub fn twain_available() -> bool {
+        super::twain::dsm_path().is_some()
+    }
+
+    /// TWAIN's source chosen and its dialog, over the window in front.
+    pub fn acquire_twain(folder: &std::path::Path) -> Acquired {
+        // SAFETY: no arguments; returns the window in front or null.
+        let parent =
+            unsafe { windows_sys::Win32::UI::WindowsAndMessaging::GetForegroundWindow() } as isize;
+        super::twain::acquire_installed(parent, folder)
     }
 
     pub fn acquire_wia(folder: &std::path::Path) -> Acquired {
@@ -357,8 +359,12 @@ mod imp {
         None
     }
 
-    pub fn twain_sources_installed() -> bool {
+    pub fn twain_available() -> bool {
         false
+    }
+
+    pub fn acquire_twain(_folder: &std::path::Path) -> Acquired {
+        Acquired::Unavailable("TWAIN".into())
     }
 
     pub fn acquire_wia(_folder: &std::path::Path) -> Acquired {
@@ -450,17 +456,22 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
-    /// The source items: WIA is chosen when it is there; TWAIN stays off
-    /// until acquiring through it is done.
+    /// The source items: WIA is the default; TWAIN can be chosen where its
+    /// source manager is installed, and Acquire then goes through it.
     #[test]
     fn the_source_items_reflect_what_can_be_used() {
         let (mut app, ctx) = app_and_ctx();
         assert_eq!(app.acquire_source, Source::Wia);
-        assert!(!run_command(&mut app, &ctx, "menu.file.acquire_twain"));
-        assert_eq!(app.acquire_source, Source::Wia);
+        assert_eq!(run_command(&mut app, &ctx, "menu.file.acquire_twain"), twain_available());
+        let want = if twain_available() { Source::Twain } else { Source::Wia };
+        assert_eq!(app.acquire_source, want);
+        assert_eq!(app.can_acquire(), twain_available() || wia_available());
         assert_eq!(
             run_command(&mut app, &ctx, "menu.file.acquire_wia"),
             wia_available()
         );
+        if wia_available() {
+            assert_eq!(app.acquire_source, Source::Wia);
+        }
     }
 }
