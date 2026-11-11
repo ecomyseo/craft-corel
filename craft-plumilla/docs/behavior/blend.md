@@ -271,5 +271,13 @@ gives:
 | New Path | The next click names the curve the blend follows (as the docker's New Path). |
 | Show Path | Selects the curve the blend follows; off when the blend follows none or that curve is no longer in the drawing. |
 | Detach From Path | The blend no longer follows its path: its steps go straight from start to end; one undo step. |
+| Map Nodes | The next click picks a node of the start object, the one after it a node of the end object: the steps pair those two nodes, each outline running on to its next node (`map_nodes`, the same record a `.cdr` blend keeps); one undo step. Right-click cancels. |
+| Split | The next click picks a step (the one whose box holds the click, nearest centre): it becomes an object of the drawing that ends the first part and starts the second (a compound blend). The steps on either side stay where they were; a part left with no steps has no blend; the turn stays with the second part, which starts at an object already turned part of the way. Not for a blend along a path. One undo step; the new object comes out selected. |
+| Fuse Start | On a part of a split blend whose start object ends another part: the two become one blend and the object between them is deleted; the steps are as many as the two parts had plus one, the turns add up, mapped nodes keep the outer ends'. One undo step. |
+| Fuse End | The same from the part whose end object starts another part. |
 
-Tests: `ui::context::blend_and_mesh_menu_tests::the_blend_menu_changes_its_ends_and_its_path`.
+The Blend docker has the same four as buttons under Rotate All Objects.
+
+Tests: `ui::context::blend_and_mesh_menu_tests::the_blend_menu_changes_its_ends_and_its_path`,
+`blend_compound::tests` (split keeps every step in place and undoes in one step, a split at the first step, Fuse Start and Fuse End
+give the blend back, Map Nodes pairs the nodes clicked and twists the steps, the clicks).

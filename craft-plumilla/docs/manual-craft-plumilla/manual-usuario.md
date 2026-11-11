@@ -189,6 +189,14 @@ Estos atajos proceden de las funciones documentadas de la base. No se han vuelto
 
 ## 16. Novedades de esta edición
 
+### Versión 0.45.0 (11 de noviembre de 2026)
+
+**Mezclas compuestas.** En el menú del botón derecho de la herramienta Mezcla y en su panel: **Asignar nodos** empareja un nodo del objeto inicial con uno del final (un clic en cada uno); **Dividir** convierte el paso en el que se hace clic en un objeto propio que termina la primera parte y empieza la segunda, sin mover ningún paso; **Fusionar inicio** y **Fusionar final** vuelven a unir las partes y eliminan el objeto de en medio.
+
+**Grupos y conectores.** Un objeto elegido dentro de un grupo (Ctrl+clic, o su fila en el panel Objetos) tiene **Sacar del grupo**: sale delante del grupo y en su sitio. Los conectores seleccionados tienen **Convertir conector** (recto, ángulo recto o ángulo recto redondeado).
+
+**Imprimir esta hoja.** En la vista previa de impresión, junto a Imprimir, envía solo la hoja que se ve.
+
 ### Versión 0.44.0 (11 de noviembre de 2026)
 
 **Cerrar trayectos.** Con la herramienta Forma, el botón derecho tiene **Cerrar trayecto** de cuatro formas: los nodos más cercanos o el inicio y el final de cada subtrayecto, con una recta o con una curva que continúa la dirección de los extremos. **Invertir subtrayectos** invierte solo los subtrayectos de los nodos elegidos.

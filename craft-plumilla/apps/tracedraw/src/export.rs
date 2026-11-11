@@ -2029,7 +2029,7 @@ fn encode_raster_with(
 /// system printer, or open it in the system viewer, which owns the
 /// printer dialog.
 pub fn print(app: &mut App, st: &PrintState) -> Result<String, String> {
-    let mut doc = print_sheets(app, st);
+    let mut doc = crate::print_this_sheet::sheets_to_print(app, st);
     if st.separations {
         doc = separations_doc_without(&doc, &st.plates_off);
     }

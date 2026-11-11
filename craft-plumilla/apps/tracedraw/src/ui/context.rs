@@ -219,6 +219,28 @@ fn blend_menu(app: &mut App, ui: &mut Ui, close: &mut bool) {
     if ci(ui, close, "context.blend_detach_path", "", on_path) {
         app.detach_blend_path();
     }
+    sep(ui);
+    blend_compound_items(app, ui, close);
+}
+
+/// Map Nodes, Split, Fuse Start and Fuse End of the selected blend (the
+/// Blend tool's right-click menu and the Blend docker).
+pub fn blend_compound_items(app: &mut App, ui: &mut Ui, close: &mut bool) {
+    let any = !app.selected_blends().is_empty();
+    if ci(ui, close, "context.blend_map_nodes", "", any) {
+        app.pending_map_nodes = Some(None);
+        app.status = tr("status.click_start_node");
+    }
+    if ci(ui, close, "context.blend_split", "", app.can_split_blend()) {
+        app.pending_blend_split = true;
+        app.status = tr("status.click_blend_step");
+    }
+    if ci(ui, close, "context.blend_fuse_start", "", app.can_fuse_blend(false)) {
+        app.fuse_blend(false);
+    }
+    if ci(ui, close, "context.blend_fuse_end", "", app.can_fuse_blend(true)) {
+        app.fuse_blend(true);
+    }
 }
 
 /// Right-click with the Mesh Fill tool on an object with a mesh fill: a
@@ -591,6 +613,27 @@ pub(crate) fn object_menu(app: &mut App, ui: &mut Ui, close: &mut bool) {
         if ci(ui, close, "menu.object.group_ungroup_all", "", true) {
             app.ungroup_all();
         }
+    }
+    // An object picked inside a group (Ctrl+click) leaves it.
+    let chosen = app.selection.clone();
+    if app.can_remove_from_group(&chosen) && ci(ui, close, "context.remove_from_group", "", true) {
+        app.remove_from_group(&chosen);
+    }
+    // Connectors run another way.
+    let kinds: Vec<_> = app.selected_connectors().iter().map(|(_, c)| c.kind).collect();
+    if !kinds.is_empty() {
+        use crate::connectors::ConnectorKind;
+        sub(ui, "context.convert_connector", |ui| {
+            for (k, key) in [
+                (ConnectorKind::Straight, "connector.straight"),
+                (ConnectorKind::RightAngle, "connector.right_angle"),
+                (ConnectorKind::Rounded, "connector.rounded"),
+            ] {
+                if ci(ui, close, key, "", kinds.iter().any(|x| *x != k)) {
+                    app.convert_connectors(k);
+                }
+            }
+        });
     }
     sep(ui);
     if ci(ui, close, "menu.object.hide_object", "", true) {
@@ -1476,6 +1519,24 @@ mod blend_and_mesh_menu_tests {
         app.select(vec![another]);
         assert_eq!(click(&mut app, 4, blend_menu).as_deref(), Some("context.blend_detach_path"));
         assert!(app.selected_blend_path().is_none());
+        // Map Nodes and Split wait for clicks; Fuse is off with one part.
+        assert_eq!(click(&mut app, 5, blend_menu).as_deref(), Some("context.blend_map_nodes"));
+        assert_eq!(app.pending_map_nodes, Some(None));
+        app.pending_map_nodes = None;
+        assert_eq!(click(&mut app, 6, blend_menu).as_deref(), Some("context.blend_split"));
+        assert!(app.pending_blend_split);
+        app.pending_blend_split = false;
+        assert_eq!(click(&mut app, 7, blend_menu), None, "nothing to fuse");
+        assert_eq!(click(&mut app, 8, blend_menu), None, "nothing to fuse");
+        let mid = app.split_blend(1).expect("split");
+        app.select(vec![mid]);
+        assert_eq!(click(&mut app, 8, blend_menu).as_deref(), Some("context.blend_fuse_end"));
+        assert!(app.doc().find_shape(mid).is_none());
+        // Fuse and Split each undo in one step.
+        app.undo();
+        assert!(app.doc().find_shape(mid).is_some());
+        app.undo();
+        assert!(app.doc().find_shape(mid).is_none());
         // Each change was one step: undo brings the path back.
         app.undo();
         app.select(vec![another]);

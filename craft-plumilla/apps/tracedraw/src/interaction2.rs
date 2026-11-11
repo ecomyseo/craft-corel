@@ -27,6 +27,8 @@ impl App {
             || self.pending_clone_effect.is_some()
             || self.pending_blend_path
             || self.pending_blend_pick.is_some()
+            || self.pending_blend_split
+            || self.pending_map_nodes.is_some()
             || self.pending_text_path
             || self.pending_palette_sample;
         if !waiting {
@@ -43,6 +45,8 @@ impl App {
             self.pending_clone_effect = None;
             self.pending_blend_path = false;
             self.pending_blend_pick = None;
+            self.pending_blend_split = false;
+            self.pending_map_nodes = None;
             self.pending_text_path = false;
             self.pending_palette_sample = false;
             self.status = tr("status.cancelled");
@@ -72,6 +76,10 @@ impl App {
                 }
                 None => self.status = tr("status.cancelled"),
             }
+            return true;
+        }
+        if self.pending_blend_split || self.pending_map_nodes.is_some() {
+            self.blend_compound_click(p);
             return true;
         }
         if self.pending_shaping.is_some() {

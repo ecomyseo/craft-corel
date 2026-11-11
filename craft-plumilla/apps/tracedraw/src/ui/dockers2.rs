@@ -1763,6 +1763,41 @@ fn blend(app: &mut App, ui: &mut Ui) {
         .rich_tip(crate::ui::tips::keyed("docker.rotate_all_objects"))
         .rich_disabled_tip(crate::ui::tips::keyed("docker.rotate_all_objects"))
         .changed();
+    // Map Nodes, Split, Fuse Start and Fuse End (as the Blend tool's
+    // right-click menu).
+    ui.horizontal_wrapped(|ui| {
+        let rows = [
+            ("context.blend_map_nodes", cur.is_some()),
+            ("context.blend_split", app.can_split_blend()),
+            ("context.blend_fuse_start", app.can_fuse_blend(false)),
+            ("context.blend_fuse_end", app.can_fuse_blend(true)),
+        ];
+        for (key, on) in rows {
+            if ui
+                .add_enabled(on, egui::Button::new(tr(key)))
+                .rich_tip(crate::ui::tips::keyed(key))
+                .rich_disabled_tip(crate::ui::tips::keyed(key))
+                .clicked()
+            {
+                match key {
+                    "context.blend_map_nodes" => {
+                        app.pending_map_nodes = Some(None);
+                        app.status = tr("status.click_start_node");
+                    }
+                    "context.blend_split" => {
+                        app.pending_blend_split = true;
+                        app.status = tr("status.click_blend_step");
+                    }
+                    "context.blend_fuse_start" => {
+                        app.fuse_blend(false);
+                    }
+                    _ => {
+                        app.fuse_blend(true);
+                    }
+                }
+            }
+        }
+    });
     section(ui, Some(&tr("docker.blend_acceleration")));
     ui.spacing_mut().slider_width = (ui.available_width() - 80.0).clamp(80.0, 200.0);
     ui.horizontal(|ui| {

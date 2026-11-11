@@ -76,6 +76,11 @@ connectors the outline: width, style, arrowheads.
 While a connector is dragged the anchors of both objects are shown, and
 the rubber-band line starts at the anchor that will be used.
 
+The right-click menu of selected connectors has Convert Connector:
+Straight, Right angle and Rounded right angle, each off when every
+selected connector already runs that way; the change is one undo step, as
+with the property bar's buttons (`group_extract::tests::convert_connector_changes_how_it_runs`).
+
 ## Checks
 
 - `connectors::tests::connectors_follow_their_objects`

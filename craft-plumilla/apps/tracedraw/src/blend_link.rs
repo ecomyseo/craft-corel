@@ -25,7 +25,7 @@ fn is_blend(e: &Effect) -> bool {
 
 /// `effects` with the blend replaced in place by `b` (removed with
 /// `None`).
-fn with_blend(effects: &[Effect], b: Option<Effect>) -> Vec<Effect> {
+pub(crate) fn with_blend(effects: &[Effect], b: Option<Effect>) -> Vec<Effect> {
     let mut out = Vec::with_capacity(effects.len());
     let mut placed = false;
     for e in effects {
@@ -63,7 +63,7 @@ impl App {
     }
 
     /// Every object with a blend, and its blend.
-    fn all_blends(&self) -> Vec<(ShapeId, Effect)> {
+    pub(crate) fn all_blends(&self) -> Vec<(ShapeId, Effect)> {
         fn walk(s: &Shape, out: &mut Vec<(ShapeId, Effect)>) {
             if let Some(e) = s.effects.iter().find(|e| is_blend(e)) {
                 out.push((s.id, e.clone()));
@@ -196,7 +196,7 @@ impl App {
     }
 
     /// The selected blend: (start object, its blend), the first one.
-    fn first_selected_blend(&self) -> Option<(ShapeId, Effect)> {
+    pub(crate) fn first_selected_blend(&self) -> Option<(ShapeId, Effect)> {
         self.selected_blends().into_iter().next()
     }
 

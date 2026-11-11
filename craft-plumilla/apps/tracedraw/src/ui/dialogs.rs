@@ -511,6 +511,8 @@ pub struct PrintState {
     /// The dialog's tab: 0 General, 1 Color, 2 Composite, 3 Layout,
     /// 4 Prepress, 5 PostScript, 6 Issues.
     pub tab: usize,
+    /// Print This Sheet (Print Preview): only this sheet is sent.
+    pub only_sheet: Option<usize>,
     /// 0 a printer (`printer`, else the system viewer, which prints),
     /// 1 a PDF file, 2 a PostScript file.
     pub destination: usize,
@@ -768,6 +770,7 @@ pub fn parse_page_list(text: &str, count: usize) -> Vec<usize> {
 impl Default for PrintState {
     fn default() -> Self {
         PrintState {
+            only_sheet: None,
             plates_off: Vec::new(),
             copies: 1,
             all_pages: true,

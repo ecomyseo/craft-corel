@@ -1823,6 +1823,11 @@ pub struct App {
     /// New Start (true) or New End (false) of the selected blend waits
     /// for a click on the object to take.
     pub pending_blend_pick: Option<bool>,
+    /// Split waits for a click on the step to split the blend at.
+    pub pending_blend_split: bool,
+    /// Map Nodes waits for a click on a node of the start object (`None`
+    /// inside), then on one of the end object (the first click inside).
+    pub pending_map_nodes: Option<Option<tracedraw_core::Point>>,
     /// Text > Fit Text to Path waits for a click on the path.
     pub pending_text_path: bool,
     /// The document palette's eyedropper waits for a click on the drawing.
@@ -3039,6 +3044,8 @@ impl App {
             bevel_synced_to: None,
             pending_blend_path: false,
             pending_blend_pick: None,
+            pending_blend_split: false,
+            pending_map_nodes: None,
             pending_text_path: false,
             pending_palette_sample: false,
             envelope_keep_lines: false,

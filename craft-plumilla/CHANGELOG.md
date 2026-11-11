@@ -4,6 +4,13 @@ Versions follow the tags of this repository; every push to `main` also
 publishes a nightly build. [`docs/features.md`](docs/features.md) has the
 full, row-by-row status.
 
+## 0.45.0 (2026-11-11)
+
+- Blends: Map Nodes pairs a node of the start object with one of the end object (two clicks); Split makes a step an object that ends the first part and starts the second (a compound blend, every step left in place); Fuse Start and Fuse End join the parts again. In the Blend tool's right-click menu and as buttons in the Blend docker.
+- Remove From Group in the right-click menu of an object picked inside a group (on the page and in the Objects docker): it comes out just in front of the group, where it was.
+- Convert Connector (Straight, Right angle, Rounded right angle) in the right-click menu of selected connectors.
+- Print This Sheet in Print Preview sends only the sheet shown.
+
 ## 0.44.0 (2026-11-11)
 
 - Insert Spread Before and After in the Objects docker's page menu (two pages at a time with facing pages, one undo step).

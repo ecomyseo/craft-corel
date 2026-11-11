@@ -187,6 +187,11 @@ over its settings), fills the window with the sheets exactly as Print
 sends them: the imposition, the marks, Mirror and Invert, built by the
 same function (`export::print_sheets`).
 
+Print This Sheet, beside Print, sends only the sheet shown (with an
+imposition, the sheet with all the pages it holds), with the same
+settings and destination; the next Print sends them all again
+(`print_this_sheet::tests::print_this_sheet_sends_only_the_sheet_shown`).
+
 - The printer's unprintable edge (#1924): with a printer chosen (not a
   file), the strip along each side of the sheet that the printer cannot
   print on, its hard margins as the system reports them, is shaded

@@ -237,6 +237,19 @@ Distribute panel. Their pictures show a square behind a
 circle: the result filled, an object that stays outlined, one that goes
 away dashed.
 
+## Remove From Group
+
+An object picked inside a group that lies on a layer (Ctrl+click on the
+page, or its row in the Objects docker) has Remove From Group in its
+right-click menu (the page's and the docker's). The chosen objects come
+out of the group just in front of it, where they were on the page, in the
+order they had; when the last ones leave, the group goes and they take
+its place. One undo step; they come out selected. Objects in a group
+inside another group, or in a clip frame, do not have it.
+
+Tests: `group_extract::tests::a_member_comes_out_in_front_of_its_group`,
+`group_extract::tests::the_last_members_out_take_the_group_s_place`.
+
 ## Dialogs
 
 Enter presses OK in every modal dialog (Esc cancels). In the two

@@ -267,6 +267,7 @@ pub fn show(app: &mut App, ui: &mut Ui) {
     }
     let mut close = false;
     let mut print = false;
+    let mut print_one = false;
     let ctx = ui.ctx().clone();
 
     egui::Panel::top("print_preview_bar")
@@ -282,6 +283,14 @@ pub fn show(app: &mut App, ui: &mut Ui) {
                 ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
                 if ui.button(tr("dialog.print")).clicked() {
                     print = true;
+                }
+                if ui
+                    .button(tr("print.this_sheet"))
+                    .rich_tip(crate::ui::tips::keyed("print.this_sheet"))
+                    .clicked()
+                {
+                    print = true;
+                    print_one = true;
                 }
                 ui.separator();
                 let n = sheets(app, &mut pv).pages.len().max(1);
@@ -919,6 +928,8 @@ pub fn show(app: &mut App, ui: &mut Ui) {
         close = true;
     }
     if print {
+        // Print This Sheet: the sheet shown, this time only.
+        pv.st.only_sheet = print_one.then_some(pv.sheet);
         // The inks unticked here do not print (#846).
         pv.st.plates_off = pv
             .inks
@@ -931,6 +942,7 @@ pub fn show(app: &mut App, ui: &mut Ui) {
             Ok(msg) => app.status = msg,
             Err(e) => app.status = format!("{}: {e}", tr("dialog.print_failed")),
         }
+        pv.st.only_sheet = None;
         if pv.st.destination == 0 {
             app.printer_last = pv.st.printer.clone();
         }

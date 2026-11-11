@@ -77,6 +77,8 @@ struct Actions {
     new_layer: bool,
     new_master: Option<MasterScope>,
     delete_object: Option<Vec<ShapeId>>,
+    /// Remove From Group on these objects.
+    leave_group: Option<Vec<ShapeId>>,
     layer_to_master: Option<LayerId>,
     master_to_page: Option<LayerId>,
     /// Not an action: the page whose rows are being drawn (None for the
@@ -917,6 +919,10 @@ fn object_menu(app: &App, ui: &mut Ui, s: &Shape, label: &str, act: &mut Actions
         }
     });
     act.targets = targets;
+    if app.can_remove_from_group(&ids) && ui.button(tr("context.remove_from_group")).clicked() {
+        act.leave_group = Some(ids.clone());
+        ui.close();
+    }
     if ui.button(tr("menu.edit.delete")).clicked() {
         act.delete_object = Some(ids);
         ui.close();
@@ -1829,6 +1835,9 @@ fn apply(app: &mut App, ui: &Ui, act: Actions) {
     if let Some(ids) = act.delete_object {
         app.select(ids);
         app.delete_selection();
+    }
+    if let Some(ids) = act.leave_group {
+        app.remove_from_group(&ids);
     }
     if let Some(layer) = act.layer_to_master {
         layer_to_master(app, layer);
