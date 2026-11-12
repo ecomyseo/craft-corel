@@ -12,9 +12,7 @@ ni verificadas.**
 > **Aviso de marcas.** Craft Plumilla es un proyecto independiente: no tiene
 > relación con Corel Corporation ni con Alludo, ni está patrocinado ni respaldado
 > por ellas. CorelDRAW y Corel son marcas registradas de Corel Corporation; se
-> nombran solo para indicar con qué archivos y programa es compatible. Hasta el
-> 10 de noviembre de 2026 este proyecto se llamó «Craft Corel»; se cambió el nombre
-> para no usar esa marca.
+> nombran solo para indicar con qué archivos y programa es compatible.
 
 ## Descarga
 

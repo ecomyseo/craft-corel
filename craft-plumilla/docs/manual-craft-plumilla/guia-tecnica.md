@@ -4,7 +4,7 @@ Edición del 10 de noviembre de 2026. Arquitectura, automatización y criterios 
 
 Esta edición describe la fuente alpha actual y sus correcciones verificadas mediante pruebas locales. La nueva distribución modular candidata está en comprobación final; la portable 214714 queda como referencia histórica con pérdida de unidad CDR. Los resultados se identifican por recorrido y artefacto, sin depender de un número de paquete fijo. La versión objetivo de una API no identifica el producto original ni demuestra equivalencia completa.
 
-**Aviso de marcas.** Craft Plumilla es un proyecto independiente, sin relación con Corel Corporation ni con Alludo, que no lo patrocinan ni lo respaldan. CorelDRAW y Corel son marcas registradas de Corel Corporation; se nombran solo para indicar con qué archivos y programa es compatible. Hasta el 10 de noviembre de 2026 el programa se llamó «Craft Corel».
+**Aviso de marcas.** Craft Plumilla es un proyecto independiente, sin relación con Corel Corporation ni con Alludo, que no lo patrocinan ni lo respaldan. CorelDRAW y Corel son marcas registradas de Corel Corporation; se nombran solo para indicar con qué archivos y programa es compatible.
 
 [TOC]
 

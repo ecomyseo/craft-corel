@@ -2,20 +2,20 @@
 
 Aplicación vectorial independiente derivada del código abierto de
 [TraceDraw](https://github.com/tracedraw/tracedraw), con licencias MIT o Apache-2.0.
-La meta de esta variante es ofrecer herramientas, opciones y formatos equivalentes
-a los de CorelDRAW 2026 (versión 27.2.0.135) y abrir y guardar sus archivos CDR.
+La meta de esta variante es ofrecer las herramientas habituales de un editor
+vectorial profesional y abrir y guardar archivos en formato CDR.
 **Esa meta todavía no está cumplida ni se ha acreditado compatibilidad del 100 %.**
 
 > **Aviso de marcas.** Craft Plumilla es un proyecto independiente: no tiene relación
 > con Corel Corporation ni con Alludo, ni está patrocinado ni respaldado por ellas.
 > CorelDRAW y Corel son marcas registradas de Corel Corporation; se mencionan solo
-> para indicar con qué archivos y programa es compatible, como permite el artículo 14
-> del Reglamento (UE) 2017/1001. El nombre del programa no usa esas marcas.
+> para indicar la compatibilidad con el formato de archivo CDR, como permite el
+> artículo 14 del Reglamento (UE) 2017/1001. El nombre del programa no usa esas marcas.
 
 Los ejecutables propios son `craft-plumilla.exe` y `craft-plumilla-cli.exe`.
 Se conserva el modelo interno de TraceDraw y el formato editable `.tdraw`.
 La lectura y escritura de CDR procede de esa base independiente; no utiliza el
-motor instalado de CorelDRAW. No se distribuyen archivos propietarios de Corel.
+motor de ningún otro programa. No se distribuyen archivos propietarios de terceros.
 El actualizador de la base está desactivado en esta variante.
 
 El modo `craft-plumilla --mcp` permite editar, guardar y exportar sin abrir ventanas.

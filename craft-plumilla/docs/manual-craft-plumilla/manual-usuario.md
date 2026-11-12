@@ -4,7 +4,7 @@ Edición del 10 de noviembre de 2026. Aplicación vectorial de desarrollo basada
 
 Este manual explica cómo trabajar con documentos, organizar el dibujo y preparar archivos de intercambio. Describe la fuente alpha actual, con las nuevas funciones comprobadas en pruebas locales; la distribución modular candidata está en verificación final al fijar esta edición. La portable 214714 es una referencia histórica con diferencias conocidas. Craft Plumilla es independiente: no requiere CorelDRAW y no acredita compatibilidad completa con sus documentos, herramientas o macros.
 
-**Aviso de marcas.** Craft Plumilla es un proyecto independiente, sin relación con Corel Corporation ni con Alludo, que no lo patrocinan ni lo respaldan. CorelDRAW y Corel son marcas registradas de Corel Corporation; se nombran solo para indicar con qué archivos y programa es compatible. Hasta el 10 de noviembre de 2026 el programa se llamó «Craft Corel».
+**Aviso de marcas.** Craft Plumilla es un proyecto independiente, sin relación con Corel Corporation ni con Alludo, que no lo patrocinan ni lo respaldan. CorelDRAW y Corel son marcas registradas de Corel Corporation; se nombran solo para indicar con qué archivos y programa es compatible.
 
 [TOC]
 
