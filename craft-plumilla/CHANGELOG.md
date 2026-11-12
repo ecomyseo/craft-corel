@@ -4,6 +4,11 @@ Versions follow the tags of this repository; every push to `main` also
 publishes a nightly build. [`docs/features.md`](docs/features.md) has the
 full, row-by-row status.
 
+## 0.46.0 (2026-11-12)
+
+- Move to Left, Right, Top or Ground Plane in the right-click menu of the selection while Draw in Perspective is on (one undo step).
+- Object > Insert > Identify Barcode reads the QR code of the selected picture; the text goes to the status line and the clipboard.
+
 ## 0.45.0 (2026-11-11)
 
 - Blends: Map Nodes pairs a node of the start object with one of the end object (two clicks); Split makes a step an object that ends the first part and starts the second (a compound blend, every step left in place); Fuse Start and Fuse End join the parts again. In the Blend tool's right-click menu and as buttons in the Blend docker.

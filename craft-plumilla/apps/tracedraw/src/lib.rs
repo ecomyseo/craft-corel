@@ -43,6 +43,7 @@ mod bitmap_modes;
 mod blend_compound;
 mod group_extract;
 mod print_this_sheet;
+mod qr_read;
 mod blend_link;
 mod blend_tool;
 mod border_grommet;

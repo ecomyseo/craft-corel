@@ -413,6 +413,25 @@ impl App {
         }
     }
 
+    /// Move to Left, Right, Top or Ground Plane (the selection's right-click
+    /// menu while Draw in Perspective is on): `plane` becomes the active
+    /// one and the selected objects are laid onto it, in one undo step.
+    /// False when the grid is off or its kind has no such plane.
+    pub fn move_selection_to_plane(&mut self, plane: Plane) -> bool {
+        let ok = self
+            .perspective
+            .as_ref()
+            .is_some_and(|s| s.kind.planes().contains(&plane));
+        if !ok || self.selection.is_empty() {
+            return false;
+        }
+        if let Some(s) = self.perspective.as_mut() {
+            s.plane = plane;
+        }
+        self.as_one_step(|app| app.lay_selection_onto_plane());
+        true
+    }
+
     /// Lay the selected objects onto the active plane, one undo step each.
     pub fn lay_selection_onto_plane(&mut self) -> usize {
         let ids = self.selection.clone();
@@ -629,6 +648,52 @@ pub fn show_bar(app: &mut App, ctx: &egui::Context) {
                 });
             });
         });
+}
+
+#[cfg(test)]
+mod move_tests {
+    use super::*;
+    use tracedraw_core::{geometry::Rect, ShapeKind};
+
+    #[test]
+    fn moving_to_a_plane_lays_the_selection_on_it() {
+        let mut app = App::headless();
+        let id = app
+            .new_shape(ShapeKind::Rect {
+                rect: Rect::new(10.0, 10.0, 40.0, 40.0),
+                radius: 0.0,
+                corners: None,
+            })
+            .expect("rect");
+        app.select(vec![id]);
+        // Grid off: nothing.
+        assert!(!app.move_selection_to_plane(Plane::Left));
+        app.toggle_perspective_drawing();
+        let persp = |app: &App| {
+            app.doc()
+                .find_shape(id)
+                .expect("shape")
+                .effects
+                .iter()
+                .find_map(|e| match e {
+                    Effect::Perspective { corners } => Some(*corners),
+                    _ => None,
+                })
+        };
+        assert!(persp(&app).is_none());
+        assert!(app.move_selection_to_plane(Plane::Left));
+        let left = persp(&app).expect("on the left plane");
+        assert_eq!(app.perspective.as_ref().expect("grid").plane, Plane::Left);
+        assert!(app.move_selection_to_plane(Plane::Ground));
+        assert_ne!(persp(&app).expect("on the ground plane"), left);
+        assert_eq!(app.perspective.as_ref().expect("grid").plane, Plane::Ground);
+        // One undo step per move.
+        app.undo();
+        assert_eq!(persp(&app), Some(left));
+        // Two- and three-point grids have no top plane.
+        app.set_perspective_kind(Kind::Two);
+        assert!(!app.move_selection_to_plane(Plane::Top));
+    }
 }
 
 #[cfg(test)]

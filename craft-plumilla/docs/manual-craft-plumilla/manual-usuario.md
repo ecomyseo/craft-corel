@@ -189,6 +189,12 @@ Estos atajos proceden de las funciones documentadas de la base. No se han vuelto
 
 ## 16. Novedades de esta edición
 
+### Versión 0.46.0 (12 de noviembre de 2026)
+
+**Planos de perspectiva.** Con Dibujar en perspectiva activado, el menú del botón derecho de la selección tiene **Mover al plano izquierdo, derecho, superior o del suelo** (solo los planos del tipo de rejilla): los objetos pasan al plano en un solo paso de deshacer.
+
+**Identificar código de barras.** Objeto > Insertar > Identificar código de barras lee el código QR de la imagen seleccionada y pone su texto en la barra de estado y en el portapapeles.
+
 ### Versión 0.45.0 (11 de noviembre de 2026)
 
 **Mezclas compuestas.** En el menú del botón derecho de la herramienta Mezcla y en su panel: **Asignar nodos** empareja un nodo del objeto inicial con uno del final (un clic en cada uno); **Dividir** convierte el paso en el que se hace clic en un objeto propio que termina la primera parte y empieza la segunda, sin mover ningún paso; **Fusionar inicio** y **Fusionar final** vuelven a unir las partes y eliminan el objeto de en medio.

@@ -65,3 +65,11 @@ New objects encode `https://github.com/tracedraw/tracedraw`, black on white.
 - Validate reports grey on white and white on black as unreadable.
 - The settings survive `.tdraw`; a version 27 `.cdr` reads back the
   group of two shapes.
+
+## Identify Barcode
+
+Object > Insert > Identify Barcode reads the selected picture for a QR
+code (the same decoder Validate uses). The text it holds goes to the
+status line and to the clipboard; a picture without a readable code says
+so. Off unless a picture is selected
+(`qr_read::tests::a_qr_picture_is_read_and_a_plain_one_is_not`).

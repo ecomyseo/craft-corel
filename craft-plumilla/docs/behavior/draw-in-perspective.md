@@ -91,3 +91,11 @@ other effects go with the group, as before (#674).
   its contour or distortion included
   (`command::tests::ungrouping_keeps_the_perspective_on_each_object`,
   core).
+
+## Move to a plane
+
+With the grid on, the right-click menu of the selection has Move to Left
+Plane, Right Plane, Top Plane and Ground Plane (only the planes the grid's
+kind has: the top one only with one point). The chosen plane becomes the
+active one and the selected objects are laid onto it, all in one undo step
+(`perspective_draw::tests::moving_to_a_plane_lays_the_selection_on_it`).

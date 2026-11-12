@@ -619,6 +619,20 @@ pub(crate) fn object_menu(app: &mut App, ui: &mut Ui, close: &mut bool) {
     if app.can_remove_from_group(&chosen) && ci(ui, close, "context.remove_from_group", "", true) {
         app.remove_from_group(&chosen);
     }
+    // Draw in Perspective on: the objects move onto a plane of the grid.
+    if let Some(kind) = app.perspective.as_ref().map(|s| s.kind) {
+        use crate::perspective_draw::Plane;
+        for (pl, key) in [
+            (Plane::Left, "context.move_left_plane"),
+            (Plane::Right, "context.move_right_plane"),
+            (Plane::Top, "context.move_top_plane"),
+            (Plane::Ground, "context.move_ground_plane"),
+        ] {
+            if kind.planes().contains(&pl) && ci(ui, close, key, "", true) {
+                app.move_selection_to_plane(pl);
+            }
+        }
+    }
     // Connectors run another way.
     let kinds: Vec<_> = app.selected_connectors().iter().map(|(_, c)| c.kind).collect();
     if !kinds.is_empty() {

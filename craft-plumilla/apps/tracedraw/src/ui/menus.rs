@@ -3275,6 +3275,11 @@ fn object_menu(app: &mut App, ui: &mut Ui) {
         if item(ui, "menu.object.insert_barcode", "", true) {
             app.dialog = Dialog::Barcode(Default::default());
         }
+        let can_read = app.can_identify_barcode();
+        if item(ui, "menu.object.identify_barcode", "", can_read) {
+            let ctx = ui.ctx().clone();
+            app.identify_barcode(Some(&ctx));
+        }
         if item(ui, "menu.object.insert_page_number", "", true) {
             app.insert_page_number(crate::ops2::PageNumberWhere::Active);
         }
